@@ -176,7 +176,9 @@ async function updateAzurePullRequestStatus({ prUrlOrId, repoSettings, status })
     "Content-Type": "application/json",
   };
 
-  const url = `${baseUrl}/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(repoIdOrName)}/pullrequests/${encodeURIComponent(prId)}?api-version=${apiVersion}`;
+  // Use base URL without trailing slash and ensure clean path construction
+  const cleanBaseUrl = String(baseUrl || "https://dev.azure.com").trim().replace(/\/+$/, "");
+  const url = `${cleanBaseUrl}/${org}/${project}/_apis/git/repositories/${repoIdOrName}/pullrequests/${prId}?api-version=${apiVersion}`;
 
   const body = { status };
   if (status === "completed") {

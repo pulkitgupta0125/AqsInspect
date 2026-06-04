@@ -23,6 +23,11 @@ contextBridge.exposeInMainWorld('api', {
   sendEmail: (payload) => ipcRenderer.invoke('email:send', payload),
   testSMTP: (payload) => ipcRenderer.invoke('email:test', payload),
 
+  // Save review report to disk
+  saveReport: (payload) => ipcRenderer.invoke('report:save', payload),
+  // Save review report as PDF (renderer provides markdown; main process converts to PDF)
+  saveReportPdf: (payload) => ipcRenderer.invoke('report:savePdf', payload),
+
   /* =============================
      LLM
   ============================= */
@@ -59,6 +64,14 @@ contextBridge.exposeInMainWorld('api', {
   getFileContent: (payload) => ipcRenderer.invoke("file:getContent", payload),
   performPRAction: (payload) => ipcRenderer.invoke("pr:performAction", payload),
   openExternal: (url) => ipcRenderer.invoke("app:openExternal", url),
+
+  /* =============================
+     RULES & USER
+  ============================= */
+  listRules: () => ipcRenderer.invoke('rules:list'),
+  updateRules: (payload) => ipcRenderer.invoke('rules:update', payload),
+  getUserEmail: (payload) => ipcRenderer.invoke('user:getEmail', payload),
+  verifyMCP: () => ipcRenderer.invoke('mcp:verify'),
 
   /* =============================
      DEBUG (OPTIONAL)

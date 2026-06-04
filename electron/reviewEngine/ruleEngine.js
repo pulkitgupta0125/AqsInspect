@@ -3,6 +3,10 @@
  * Combines deterministic enterprise rules with AI review decisions.
  * This module is the enterprise validation layer for MCP analysis.
  */
+const fs = require('fs');
+const path = require('path');
+const store = require('../configStore');
+const { buildDynamicRulesFromIfsCore } = require('./dynamicRuleBuilder');
 
 const DEFAULT_RULES = [
   {
@@ -79,18 +83,93 @@ const DEFAULT_RULES = [
       return [];
     }
   }
+  ,
+  {
+    id: "MCP_RULE_IFS_MISSING_CDB",
+    category: "all",
+    severity: "Blocker",
+    title: "Referenced .cdb file missing in IFS core",
+    description: "Detects references to .cdb artifacts and ensures they exist in the configured IFS core path.",
+    evaluate: ({ content }) => {
+      const res = [];
+      if (!content) return res;
+      const matches = Array.from(new Set((content.match(/([\w\-\/\\\.]+\.cdb)\b/gi) || [])));
+      if (!matches.length) return res;
+
+      const cfg = (store && typeof store.getConfig === 'function') ? store.getConfig() : {};
+      const corePath = String((cfg?.ifs?.corePath || cfg?.ifsCorePath) || "").trim();
+
+      for (const m of matches) {
+        const candidate = m.replace(/^[\\/]+/, "");
+        let exists = false;
+        if (corePath) {
+          const full = path.isAbsolute(candidate) ? candidate : path.join(corePath, candidate);
+          try {
+            exists = fs.existsSync(full);
+          } catch (e) {
+            exists = false;
+          }
+        }
+
+        if (!exists) {
+          res.push({
+            severity: "Blocker",
+            confidence: 0.98,
+            title: "Missing referenced .cdb artifact",
+            explanation: `Referenced CDB file ${m} was not found under configured IFS core path. This may break runtime behavior if the artifact is required.`,
+            ruleId: "MCP_RULE_IFS_MISSING_CDB",
+            recommendation: "Ensure the referenced .cdb file is present in the IFS core solution or update references.",
+            lineRange: null,
+            matchText: m
+          });
+        }
+      }
+
+      return res;
+    }
+  }
 ];
 
 function evaluateRulesForFile(file, findings = [], content = "") {
   const normalizedCategory = String(file.category || "other").toLowerCase();
   let allFindings = [];
 
+  // Evaluate static/default rules
   for (const rule of DEFAULT_RULES) {
     if (rule.category === "all" || rule.category === normalizedCategory) {
       try {
         allFindings = allFindings.concat(rule.evaluate({ file, findings, content }));
       } catch (err) {
         // rule evaluation should not crash the review pipeline
+      }
+    }
+  }
+
+  // Evaluate dynamic rules from IFS core
+  try {
+    const cfg = store && typeof store.getConfig === 'function' ? store.getConfig() : {};
+    const dynamicRulesCached = buildDynamicRulesFromIfsCore(cfg?.ifs?.corePath);
+    for (const rule of dynamicRulesCached) {
+      if (rule && rule.category === "all" || rule.category === normalizedCategory) {
+        try {
+          allFindings = allFindings.concat(rule.evaluate({ file, findings, content }));
+        } catch (err) {
+          // dynamic rule evaluation should not crash the review pipeline
+        }
+      }
+    }
+  } catch (err) {
+    // Dynamic rules loading failure should not crash the review
+  }
+
+  // Evaluate dynamic rules built from IFS core path
+  const dynamicRules = buildDynamicRulesFromIfsCore();
+  for (const rule of dynamicRules) {
+    if (rule.category === "all" || rule.category === normalizedCategory) {
+      try {
+        allFindings = allFindings.concat(rule.evaluate({ file, findings, content }));
+      } catch (err) {
+        // dynamic rule evaluation should not crash the pipeline
       }
     }
   }
@@ -148,8 +227,8 @@ function validatePRImpact(prDetails = {}, ifsMetadata = {}) {
 }
 
 module.exports = {
+  DEFAULT_RULES,
   evaluateRulesForFile,
   mergeAIAndRuleFindings,
-  validatePRImpact,
-  DEFAULT_RULES
+  validatePRImpact
 };

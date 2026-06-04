@@ -1,4 +1,4 @@
-const { ipcMain, app, shell } = require("electron");
+const { ipcMain, app, shell, dialog, BrowserWindow } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const axios = require("axios");
@@ -427,6 +427,111 @@ ipcMain.handle("email:test", async (_evt, smtpConfig) => {
   } catch (e) {
     console.error("email:test failed:", e?.message || e);
     return { ok: false, error: e?.message || "Failed to verify SMTP settings." };
+  }
+});
+
+ipcMain.handle('report:save', async (_evt, payload) => {
+  const { defaultFilename, content } = payload || {};
+  try {
+    const res = await dialog.showSaveDialog({
+      defaultPath: defaultFilename || 'review-report.md',
+      filters: [
+        { name: 'Markdown', extensions: ['md', 'txt'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (res.canceled) return { ok: false, error: 'cancelled' };
+    const filePath = res.filePath;
+    fs.writeFileSync(filePath, String(content || ''), 'utf-8');
+    return { ok: true, path: filePath };
+  } catch (e) {
+    console.error('report:save failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to save report' };
+  }
+});
+
+ipcMain.handle('report:savePdf', async (_evt, payload) => {
+  const { defaultFilename, content } = payload || {};
+  try {
+    const res = await dialog.showSaveDialog({
+      defaultPath: defaultFilename ? defaultFilename.replace(/\.[^/.]+$/, "") + '.pdf' : 'review-report.pdf',
+      filters: [
+        { name: 'PDF', extensions: ['pdf'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (res.canceled) return { ok: false, error: 'cancelled' };
+    const filePath = res.filePath;
+
+    // Minimal markdown -> HTML conversion (sufficient for report formatting)
+    const md = String(content || '');
+    const escapeHtml = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    let html = md
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // Code fences -> pre
+    html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${escapeHtml(code)}</code></pre>`);
+    // Headings
+    html = html.replace(/^###### (.*$)/gim, '<h6>$1</h6>');
+    html = html.replace(/^##### (.*$)/gim, '<h5>$1</h5>');
+    html = html.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
+    html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+    html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+    html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+    // Bold/italic
+    html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
+    html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
+    // Lists
+    html = html.replace(/^- (.*$)/gim, '<li>$1</li>');
+    html = html.replace(/(<li>[\s\S]*?<\/li>)(?!(<li>))/gim, '<ul>$1</ul>');
+    // Links
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2">$1</a>');
+    // Paragraphs
+    html = html
+      .split(/\n\n+/)
+      .map((p) => {
+        if (/^<h\d>/.test(p) || /^<pre>/.test(p) || /^<ul>/.test(p)) return p;
+        return `<p>${p.replace(/\n/g, '<br/>')}</p>`;
+      })
+      .join('\n');
+
+    const fullHtml = `<!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin: 24px; color: #111; }
+          pre { background:#f6f8fa; padding:12px; border-radius:6px; overflow:auto }
+          code { font-family: monospace; }
+          h1,h2,h3 { color: #0b69ff }
+          ul { margin-left: 18px }
+          table { border-collapse: collapse }
+        </style>
+      </head>
+      <body>
+        ${html}
+      </body>
+      </html>`;
+
+    const bw = new BrowserWindow({ width: 900, height: 1100, show: false, webPreferences: { offscreen: true } });
+    await bw.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
+    // wait for content
+    await new Promise((res) => setTimeout(res, 300));
+
+    const pdfBuffer = await bw.webContents.printToPDF({ landscape: false, printBackground: true });
+    const fs = require('fs');
+    fs.writeFileSync(filePath, pdfBuffer);
+    try { bw.close(); } catch(_) {}
+    return { ok: true, path: filePath };
+  } catch (e) {
+    console.error('report:savePdf failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to save PDF' };
   }
 });
 
@@ -1415,5 +1520,143 @@ ipcMain.handle("file:getContent", async (_evt, payload) => {
 
     // If GitHub returns something else (e.g. directory)
     throw new Error("GitHub returned non-file content (path may be a directory or missing).");
+  }
+});
+
+// ===========================
+// Rules Management
+// ===========================
+ipcMain.handle('rules:list', async (_evt) => {
+  try {
+    const ruleEngine = require('./reviewEngine/ruleEngine');
+    const { buildDynamicRulesFromIfsCore } = require('./reviewEngine/dynamicRuleBuilder');
+    const cfg = store.getConfig ? store.getConfig() : {};
+    
+    const DEFAULT_RULES = ruleEngine.DEFAULT_RULES || [];
+    console.log(`📋 Loaded DEFAULT_RULES: ${DEFAULT_RULES.length} rules`);
+    
+    let dynamicRules = [];
+    if (cfg?.ifs?.corePath) {
+      console.log(`📍 IFS Core path configured: ${cfg.ifs.corePath}`);
+      try {
+        dynamicRules = await buildDynamicRulesFromIfsCore(cfg.ifs.corePath) || [];
+        console.log(`✅ Built dynamic rules: ${dynamicRules.length} rules`);
+      } catch (e) {
+        console.warn('⚠️ Failed to load dynamic rules:', e?.message || e);
+      }
+    } else {
+      console.log('⚠️ No IFS Core path configured');
+    }
+
+    const allRules = [...DEFAULT_RULES, ...dynamicRules];
+    console.log(`✅ Total rules available: ${allRules.length}`);
+    return { ok: true, rules: allRules, total: allRules.length };
+  } catch (e) {
+    console.error('rules:list failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to load rules' };
+  }
+});
+
+ipcMain.handle('rules:update', async (_evt, payload) => {
+  const { rules } = payload || {};
+  try {
+    const cfg = readConfigFile();
+    cfg.customRules = rules || [];
+    writeConfigFile(cfg);
+    return { ok: true };
+  } catch (e) {
+    console.error('rules:update failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to update rules' };
+  }
+});
+
+// ===========================
+// User Email Fetching
+// ===========================
+ipcMain.handle('user:getEmail', async (_evt, payload) => {
+  const { repoType } = payload || {};
+  const cfg = store.getConfig ? store.getConfig() : {};
+  
+  try {
+    if (repoType === 'azure' || !repoType) {
+      // For Azure DevOps, fetch from current user
+      const a = cfg?.azure || {};
+      if (!a.org || !a.pat) {
+        return { ok: false, error: 'Azure DevOps settings incomplete' };
+      }
+      
+      const headers = {
+        Authorization: `Basic ${Buffer.from(`:${a.pat}`, 'utf8').toString('base64')}`,
+        Accept: 'application/json'
+      };
+      
+      const res = await axios.get(
+        `${(a.baseUrl || 'https://dev.azure.com').replace(/\/+$/, '')}/_apis/profile/profiles/me?api-version=7.0`,
+        { headers }
+      );
+      
+      const email = res.data?.publicAlias || res.data?.emailAddress || res.data?.mail;
+      if (!email) return { ok: false, error: 'Email not found in Azure profile' };
+      return { ok: true, email };
+    } else if (repoType === 'github') {
+      // GitHub: fetch authenticated user email
+      const t = cfg?.githubToken || cfg?.github?.token;
+      if (!t) return { ok: false, error: 'GitHub token not configured' };
+      
+      const res = await axios.get('https://api.github.com/user', {
+        headers: {
+          Authorization: `Bearer ${t}`,
+          Accept: 'application/vnd.github+json'
+        }
+      });
+      
+      let email = res.data?.email;
+      if (!email) {
+        // GitHub may not expose primary email, fetch from emails endpoint
+        const emailRes = await axios.get('https://api.github.com/user/emails', {
+          headers: {
+            Authorization: `Bearer ${t}`,
+            Accept: 'application/vnd.github+json'
+          }
+        });
+        
+        const primary = (emailRes.data || []).find((e) => e.primary);
+        email = primary?.email || (emailRes.data && emailRes.data[0]?.email);
+      }
+      
+      if (!email) return { ok: false, error: 'Email not found in GitHub profile' };
+      return { ok: true, email };
+    }
+    
+    return { ok: false, error: 'Unknown repo type' };
+  } catch (e) {
+    console.error('user:getEmail failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to fetch user email' };
+  }
+});
+
+// ===========================
+// MCP Verification
+// ===========================
+ipcMain.handle('mcp:verify', async (_evt) => {
+  try {
+    const mcpServer = require('./mcpServer');
+    if (!mcpServer) {
+      return { ok: false, status: 'MCP Server not found', available: false };
+    }
+    
+    // Check if MCP server is running/configured
+    const status = typeof mcpServer.getStatus === 'function' ? await mcpServer.getStatus() : 'Unknown';
+    const available = mcpServer && typeof mcpServer === 'object';
+    
+    return { 
+      ok: available, 
+      status: status || 'MCP Server is available', 
+      available,
+      message: available ? '✅ MCP Server is loaded and ready' : '❌ MCP Server not available'
+    };
+  } catch (e) {
+    console.error('mcp:verify failed:', e?.message || e);
+    return { ok: false, status: 'Error checking MCP', available: false, error: e?.message };
   }
 });

@@ -290,6 +290,52 @@ async function prepareLLMReviewBatch(
 function generateReport(staticFindings, llmFindings, ruleFindings, repoStats) {
   const allFindings = [];
 
+  // Normalize severities and uplift critical runtime issues
+  function normalizeSeverity(finding) {
+    if (!finding) return "Info";
+    const raw = String(finding.severity || finding.level || "").toLowerCase();
+    // mapping common terms to engine categories
+    const map = {
+      blocker: "Blocker",
+      critical: "Blocker",
+      high: "Blocker",
+      major: "Major",
+      medium: "Major",
+      minor: "Minor",
+      low: "Minor",
+      info: "Info",
+      informational: "Info"
+    };
+
+    let norm = map[raw] || (raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "Info");
+
+    const text = `${finding.title || ""} ${finding.explanation || ""} ${finding.matchText || ""}`.toLowerCase();
+    const criticalKeywords = [
+      "divide by zero",
+      "division by zero",
+      "null pointer",
+      "nullreference",
+      "null reference",
+      "runtime error",
+      "uncaught exception",
+      "syntax error",
+      "missing cdb",
+      "missing cdb file",
+      "missing cdb artifact",
+      "stack overflow",
+      "segmentation fault"
+    ];
+
+    for (const kw of criticalKeywords) {
+      if (text.includes(kw)) {
+        norm = "Blocker";
+        break;
+      }
+    }
+
+    return norm;
+  }
+
   // Merge static findings
   for (const staticResult of staticFindings.results || []) {
     if (staticResult.findings) {
@@ -335,7 +381,8 @@ function generateReport(staticFindings, llmFindings, ruleFindings, repoStats) {
   const topIssues = [];
 
   for (const finding of allFindings) {
-    const sev = finding.severity || "Info";
+    const sev = normalizeSeverity(finding);
+    finding.severity = sev;
     severityCounts[sev] = (severityCounts[sev] || 0) + 1;
 
     const fileName = finding.file?.path || "unknown";

@@ -9,7 +9,8 @@ export default function AIInsightsPanel({ findings = [], onFilterChange }) {
 
     (findings || []).forEach((item) => {
       const severityRaw = String(item.severity || "info").toLowerCase();
-      const severity = severityRaw === "critical" ? "HIGH" : severityRaw === "warning" ? "MEDIUM" : severityRaw.toUpperCase();
+      // Map engine severities: blocker -> HIGH, major -> MEDIUM, minor/info -> LOW
+      const severity = severityRaw === "blocker" ? "HIGH" : severityRaw === "major" ? "MEDIUM" : "LOW";
 
       if (severity === "HIGH") high++;
       else if (severity === "MEDIUM") medium++;
@@ -23,7 +24,8 @@ export default function AIInsightsPanel({ findings = [], onFilterChange }) {
       });
     });
 
-    const score = Math.max(0, 100 - (high * 10 + medium * 5 + low * 2));
+    // Strong penalties for blockers to avoid false-positive green scores
+    const score = Math.max(0, 100 - (high * 40 + medium * 15 + low * 5));
     return { high, medium, low, issues, score };
   }, [findings]);
 

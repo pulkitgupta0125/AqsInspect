@@ -236,6 +236,18 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
     return (findings || []).filter((f) => !f?.filename || String(f.filename) === fname);
   }, [findings, file?.filename]);
 
+  // If findings exist for this file, prefer hunks that contain the finding matchText
+  const toRenderHunks = useMemo(() => {
+    if (!findingsForFile || !findingsForFile.length) return hunks;
+    const texts = findingsForFile.map((f) => String(f.matchText || "").toLowerCase()).filter(Boolean);
+    if (!texts.length) return hunks;
+    const matched = hunks.filter((h) => {
+      const hay = String((h.lines || []).join("\n")).toLowerCase();
+      return texts.some((t) => t && hay.includes(t));
+    });
+    return matched.length ? matched : hunks;
+  }, [hunks, findingsForFile]);
+
   const findingsCount = findingsForFile.length;
 
   const toggleFold = (foldId) => {
@@ -440,12 +452,39 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
       {/* Normal diff render */}
       {!omitted && status !== "added" && (
         <>
-          {hunks.map((h, hIdx) => {
+          {toRenderHunks.map((h, hIdx) => {
             const pairedAll = buildSplitRowsFromHunk(h.header, h.lines).map((r, idx) => ({ ...r, origIndex: idx }));
             const paired = mode === "modified" ? pairedAll.filter((r) => r.kind !== "ctx") : pairedAll;
 
-            const displayItems =
-              mode === "modified" ? paired.map((row) => ({ type: "row", row })) : buildSmartCollapsedItems(paired, hIdx, expandedFolds);
+            // If there are findings for this file, compute allowed row indices (match + context)
+            let allowedRowSet = null;
+            if (findingsForFile && findingsForFile.length) {
+              allowedRowSet = new Set();
+              const norms = findingsForFile
+                .map((f) => normalize(String(f.matchText || "")))
+                .filter(Boolean);
+              for (let i = 0; i < paired.length; i++) {
+                const r = paired[i];
+                const joined = `${r.left || ""}\n${r.right || ""}`;
+                const jn = normalize(joined);
+                if (norms.some((n) => n && jn.includes(n) )) {
+                  // include context +/- 2 rows
+                  for (let k = Math.max(0, i - 2); k <= Math.min(paired.length - 1, i + 2); k++) allowedRowSet.add(paired[k].origIndex);
+                }
+              }
+            }
+
+            let displayItems;
+            if (mode === "modified") {
+              // simple mapping; if allowedRowSet exists, filter by it
+              const rows = paired.filter((row) => !allowedRowSet || allowedRowSet.has(row.origIndex));
+              displayItems = rows.map((row) => ({ type: "row", row }));
+            } else {
+              // collapsed mode: build items, then filter by allowed set if present
+              const items = buildSmartCollapsedItems(paired, hIdx, expandedFolds);
+              if (!allowedRowSet) displayItems = items;
+              else displayItems = items.filter((it) => it.type === "fold" ? false : allowedRowSet.has(it.row.origIndex));
+            }
 
             return (
               <div key={hIdx} className="hunk">

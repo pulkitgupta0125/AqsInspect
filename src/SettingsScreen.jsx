@@ -28,6 +28,9 @@ export default function SettingsScreen({ onBack }) {
     tenantId: ""
   });
 
+  // optional local IFS core path for rule generation
+  const [ifsCorePath, setIfsCorePath] = useState("");
+
   const [oauth2, setOAuth2] = useState({
     authUrl: "",
     tokenUrl: "",
@@ -67,6 +70,12 @@ export default function SettingsScreen({ onBack }) {
   const [mcpStatus, setMcpStatus] = useState(null);
   const [auditTrail, setAuditTrail] = useState([]);
   const [tokenResult, setTokenResult] = useState(null);
+  const [rules, setRules] = useState([]);
+  const [rulesLoading, setRulesLoading] = useState(false);
+  const [userEmail, setUserEmail] = useState('');
+  const [userEmailStatus, setUserEmailStatus] = useState(null);
+  // const [mcpStatus, setMcpStatus] = useState(null);
+  const [mcpLoading, setMcpLoading] = useState(false);
 
   /* =============================
      LOAD CONFIG
@@ -108,6 +117,8 @@ export default function SettingsScreen({ onBack }) {
           clientSecret: cfg?.ifs?.clientSecret || "",
           accessToken: cfg?.ifs?.accessToken || ""
         });
+
+        setIfsCorePath(cfg?.ifs?.corePath || cfg?.ifsCorePath || "");
 
         setOAuth2({
           authUrl: cfg?.oauth2?.authUrl || "",
@@ -299,6 +310,54 @@ export default function SettingsScreen({ onBack }) {
     }
   };
 
+  const loadRules = async () => {
+    setRulesLoading(true);
+    try {
+      const response = await window.api.listRules();
+      if (response?.ok) {
+        setRules(response.rules || []);
+      } else {
+        setRules([]);
+      }
+    } catch (err) {
+      console.error('Failed to load rules:', err);
+      setRules([]);
+    } finally {
+      setRulesLoading(false);
+    }
+  };
+
+  const fetchUserEmail = async () => {
+    setUserEmailStatus('Fetching...');
+    try {
+      const response = await window.api.getUserEmail({ repoType });
+      if (response?.ok) {
+        setUserEmail(response.email);
+        setUserEmailStatus(`✅ ${response.email}`);
+      } else {
+        setUserEmailStatus(`❌ ${response?.error || 'Failed to fetch email'}`);
+      }
+    } catch (err) {
+      setUserEmailStatus(`❌ ${err?.message || 'Failed to fetch email'}`);
+    }
+  };
+
+  const verifyMCP = async () => {
+    setMcpLoading(true);
+    try {
+      const response = await window.api.verifyMCP();
+      if (response?.ok) {
+        setMcpStatus(`✅ ${response.message || 'MCP Server is available'}`);
+      } else {
+        setMcpStatus(`⚠️ ${response?.message || response?.error || 'MCP not available'}`);
+      }
+    } catch (err) {
+      setMcpStatus(`❌ ${err?.message || 'Failed to check MCP'}`);
+    } finally {
+      setMcpLoading(false);
+    }
+  };
+
   const requestOAuth2Token = async () => {
     setOAuthStatus("Requesting token...");
     try {
@@ -378,6 +437,8 @@ export default function SettingsScreen({ onBack }) {
           clientId: ifs.clientId,
           clientSecret: ifs.clientSecret,
           accessToken: ifs.accessToken
+        ,
+          corePath: ifsCorePath
         },
         oauth2: { ...oauth2 },
         mcp: { ...mcp }
@@ -406,7 +467,8 @@ export default function SettingsScreen({ onBack }) {
           { key: "llm", label: "LLM" },
           { key: "email", label: "Email" },
           { key: "ifs", label: "IFS ERP" },
-          { key: "mcp", label: "MCP" }
+          { key: "mcp", label: "MCP" },
+          { key: "rules", label: "Rules" }
         ].map((tab) => (
           <button
             key={tab.key}
@@ -731,6 +793,19 @@ export default function SettingsScreen({ onBack }) {
               <button onClick={verifyIFSConnection}>🔍 Verify IFS Connection</button>
               {ifsStatus && <span style={{ marginLeft: 10 }}>{ifsStatus}</span>}
             </div>
+            <div style={{ marginTop: 18 }}>
+              <h4>IFS Core Local Path (optional)</h4>
+              <input
+                placeholder="Local path to IFS core solution (for rule generation)"
+                value={ifsCorePath}
+                onChange={(e) => setIfsCorePath(e.target.value)}
+                style={{ width: "100%", marginTop: 6 }}
+              />
+              <div style={{ marginTop: 6, fontSize: 12 }} className="muted">
+                Optional: provide the path where your IFS core/source is downloaded. The MCP engine will attempt to
+                load contextual rules (e.g., expected .cdb artifacts) from this location.
+              </div>
+            </div>
             {ifsDebug && (
               <div style={{ marginTop: 10, padding: 10, background: "#fff3cd", borderRadius: 6, fontSize: "0.85em" }}>
                 <strong>Debug Info:</strong>
@@ -806,6 +881,93 @@ export default function SettingsScreen({ onBack }) {
                 </div>
               )}
             </div>
+          </>
+        )}
+
+        {activeTab === "rules" && (
+          <>
+            <h3>Review Rules</h3>
+            <p>Manage and view all review rules including built-in and dynamic rules from IFS core.</p>
+            
+            <h4 style={{ marginTop: 18 }}>Available Rules</h4>
+            <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <button onClick={loadRules} disabled={rulesLoading}>
+                {rulesLoading ? "Loading..." : "📋 Load All Rules"}
+              </button>
+              <span style={{ fontWeight: "bold", color: "#0b69ff" }}>Total Rules: {rules.length}</span>
+            </div>
+
+            {rules.length > 0 && (
+              <div style={{ marginTop: 18 }}>
+                <div style={{ maxHeight: 400, overflowY: "auto", border: "1px solid #ddd", borderRadius: 6, padding: 10 }}>
+                  {rules.map((rule, idx) => (
+                    <div 
+                      key={idx} 
+                      style={{ 
+                        marginBottom: 12, 
+                        padding: 10, 
+                        background: "#f9f9f9", 
+                        borderRadius: 4, 
+                        borderLeft: `4px solid ${rule.severity === 'Blocker' ? '#dc3545' : rule.severity === 'Major' ? '#ff9800' : '#28a745'}`
+                      }}
+                    >
+                      <div style={{ fontWeight: "bold", marginBottom: 4 }}>
+                        {rule.title} <span style={{ fontSize: "0.85em", color: "#666" }}>({rule.id})</span>
+                      </div>
+                      <div style={{ fontSize: "0.9em", color: "#666", marginBottom: 4 }}>
+                        <span style={{ background: "#e3f2fd", padding: "2px 6px", borderRadius: 3, marginRight: 6 }}>
+                          Severity: {rule.severity}
+                        </span>
+                        {rule.category && (
+                          <span style={{ background: "#f3e5f5", padding: "2px 6px", borderRadius: 3 }}>
+                            Category: {rule.category}
+                          </span>
+                        )}
+                      </div>
+                      {rule.description && (
+                        <div style={{ fontSize: "0.85em", color: "#555" }}>
+                          {rule.description}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <h4 style={{ marginTop: 20 }}>User Email</h4>
+            <p style={{ fontSize: "0.9em", color: "#666" }}>
+              Fetch your email address from the repository to automatically populate review feedback recipients.
+            </p>
+            <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+              <button onClick={fetchUserEmail}>🔄 Fetch My Email</button>
+              {userEmail && (
+                <input 
+                  type="text" 
+                  value={userEmail} 
+                  readOnly
+                  style={{ flex: 1, padding: "8px", minWidth: 200 }}
+                />
+              )}
+            </div>
+            {userEmailStatus && (
+              <div style={{ marginTop: 8, fontSize: "0.9em" }}>{userEmailStatus}</div>
+            )}
+
+            <h4 style={{ marginTop: 20 }}>MCP Server Status</h4>
+            <p style={{ fontSize: "0.9em", color: "#666" }}>
+              Verify if the Model Context Protocol (MCP) server is available for advanced analysis features.
+            </p>
+            <div style={{ marginTop: 10 }}>
+              <button onClick={verifyMCP} disabled={mcpLoading}>
+                {mcpLoading ? "Checking..." : "🔍 Check MCP Server"}
+              </button>
+            </div>
+            {mcpStatus && (
+              <div style={{ marginTop: 8, fontSize: "0.9em", padding: 10, background: mcpStatus.includes("✅") ? "#d4edda" : "#fff3cd", borderRadius: 4 }}>
+                {mcpStatus}
+              </div>
+            )}
           </>
         )}
       </div>

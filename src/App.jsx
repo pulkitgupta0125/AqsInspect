@@ -53,6 +53,8 @@ export default function App() {
   const [repoType, setRepoType] = useState("github");
   const [filters, setFilters] = useState({ createdFrom: "", createdTo: "", createdBy: "", status: "all" });
   const [prList, setPrList] = useState([]);
+  // Full cached list of PRs downloaded from provider
+  const [prListAll, setPrListAll] = useState([]);
   const [prListLoading, setPrListLoading] = useState(false);
   const [selectedPrId, setSelectedPrId] = useState("");
   const [prUrl, setPrUrl] = useState("");
@@ -82,11 +84,14 @@ export default function App() {
   // ✅ NEW: AI review popup
   const [showAIReviewPopup, setShowAIReviewPopup] = useState(false);
 
+  // ✅ NEW: Review progress dialog
+  const [reviewProgress, setReviewProgress] = useState(null);
+
   // ✅ NEW: Rate limit retry handler
   const [rateLimitRetry, setRateLimitRetry] = useState(null);
 
   // ✅ NEW: Impact filter toggle (navigator shows only impacted files)
-  const [showImpactedOnly, setShowImpactedOnly] = useState(false);
+  const [showImpactedOnly, setShowImpactedOnly] = useState(true);
 
   // ✅ NEW: Active finding highlight (when user clicks a finding in popup)
   const [activeFindingKey, setActiveFindingKey] = useState("");
@@ -130,6 +135,8 @@ export default function App() {
     return buildFileTree(filteredFiles);
   }, [files, searchQuery, allFindings]);
 
+  // impactedTree will be computed after visibleFiles is available (see below)
+
 	const [selectedFile, setSelectedFile] = useState(null)
 
 
@@ -149,6 +156,13 @@ export default function App() {
     return (files || []).filter((f) => impactedSet.has(normPath(f.filename)));
   }, [files, impactedSet, showImpactedOnly]);
 
+  const impactedTree = useMemo(() => {
+    // show only files that have been reviewed
+    const reviewed = (files || []).filter((f) => f.reviewed);
+    if (!reviewed.length) return [];
+    return buildFileTree(reviewed);
+  }, [aiReview, files]);
+
   // Filter findings by severity chip
   const filteredFindings = useMemo(() => {
     const all = allFindings || [];
@@ -167,10 +181,14 @@ export default function App() {
     const summary = {};
     for (const file of files) {
       const ff = (allFindings || []).filter((x) => fileMatches(x.filename, file.filename));
+      // Map engine severities to UI badges: Blocker -> critical, Major -> warning, Minor/Info -> info
       summary[file.filename] = {
-        critical: ff.filter((x) => (x.severity || "").toLowerCase() === "critical").length,
-        warning: ff.filter((x) => (x.severity || "").toLowerCase() === "warning").length,
-        info: ff.filter((x) => (x.severity || "").toLowerCase() === "info").length,
+        critical: ff.filter((x) => ((x.severity || "") + "").toLowerCase() === "blocker").length,
+        warning: ff.filter((x) => ((x.severity || "") + "").toLowerCase() === "major").length,
+        info: ff.filter((x) => {
+          const s = ((x.severity || "") + "").toLowerCase();
+          return s === "minor" || s === "info";
+        }).length,
         total: ff.length,
       };
     }
@@ -180,8 +198,10 @@ export default function App() {
   const severityCounts = useMemo(() => {
     const counts = { critical: 0, warning: 0, info: 0 };
     (allFindings || []).forEach((finding) => {
-      const sev = String(finding?.severity || "info").toLowerCase();
-      if (counts[sev] !== undefined) counts[sev] += 1;
+      const raw = String(finding?.severity || "info").toLowerCase();
+      if (raw === "blocker") counts.critical += 1;
+      else if (raw === "major") counts.warning += 1;
+      else if (raw === "minor" || raw === "info") counts.info += 1;
     });
     return counts;
   }, [allFindings]);
@@ -284,13 +304,13 @@ useEffect(() => {
   /* =============================
      PR list + diff + AI review actions
   ============================= */
-  //const loadPRs = async (overrideFilters) => {
-	const loadPRs = async () => {
+  // loadPRs accepts optional overrideFilters so the UI can trigger reloads immediately
+    const loadPRs = async (overrideFilters) => {
     setPrListLoading(true);
     setError(null);
     //setStatusMessage("");
 
-    //const effectiveFilters = overrideFilters || filters;
+    const effectiveFilters = overrideFilters || filters;
 
     if (repoType === "github") {
       const g = config?.github || {};
@@ -317,13 +337,16 @@ useEffect(() => {
     }
 
     try {
-      //const res = await window.api.listPullRequests({ repoType, filters: effectiveFilters });
-	  const res = await window.api.listPullRequests({ repoType, filters });
+      const res = await window.api.listPullRequests({ repoType, filters: effectiveFilters });
       if (!res?.ok) {
         setError(res?.error || "Failed to load PRs");
         return;
       }
-      setPrList(res.prs || []);
+      const prs = res.prs || [];
+      setPrListAll(prs);
+      // Apply client-side owner filter if present
+      if (effectiveFilters?.createdBy) setPrList(prs.filter((p) => (p.createdBy || p.author || p.user || '').toString() === effectiveFilters.createdBy));
+      else setPrList(prs);
     } catch {
       setError("Failed to load PRs");
     } finally {
@@ -331,16 +354,37 @@ useEffect(() => {
     }
   };
 
-  const onSelectOwner = async (owner) => {
+  // Filter PR list client-side by owner to avoid reload
+  const onSelectOwner = (owner) => {
     const nextFilters = { ...filters, createdBy: owner };
     setFilters(nextFilters);
-    await loadPRs(nextFilters);
+    if (!owner) {
+      setPrList(prListAll || []);
+      return;
+    }
+    const filtered = (prListAll || []).filter((p) => {
+      const c = (p.createdBy || p.author || p.user || '').toString();
+      return c === owner;
+    });
+    setPrList(filtered);
   };
 
   const onSelectPR = (id) => {
     setSelectedPrId(id);
-    const pr = prList.find((p) => p.id === id);
+    const pr = prList.find((p) => p.id === id) || prListAll.find((p) => p.id === id);
     if (pr?.url) setPrUrl(pr.url);
+    // Eagerly fetch PR details to capture developer and creation date for reports
+    (async () => {
+      try {
+        const idOrUrl = pr?.url || id;
+        if (!idOrUrl) return;
+        const det = await window.api.getPullRequestDetails({ repoType, prUrlOrId: idOrUrl });
+        if (det?.ok && det.pr) setPrMeta(det.pr);
+      } catch (e) {
+        // ignore non-fatal
+        console.warn('Failed to fetch PR details for selection', e?.message || e);
+      }
+    })();
   };
 
   const fetchDiff = async () => {
@@ -394,6 +438,93 @@ useEffect(() => {
       setLoading(false);
     }
   };
+
+  // Sequential per-file review for a PR: fetch diff, then review files one-by-one
+  const reviewPullRequest = async () => {
+    setError(null);
+    setPrMeta(null);
+    setFiles([]);
+    setSelectedFile(null);
+    setUnifiedDiff("");
+    setAiReview(null);
+    setActiveFilter("all");
+    anchorsRef.current = [];
+    anchorKeyToIndex.current = new Map();
+    findingAnchorMapRef.current = new Map();
+    setIssueIndex(0);
+    setActiveFindingKey("");
+
+    if (!prUrl) {
+      setError("PR URL is required");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const payload = repoType === "github" ? { prUrl, repoType, token: config.githubToken || config.github?.token } : { prUrl: selectedPrId || prUrl, repoType };
+      const result = await window.api.fetchPullRequestDiff(payload);
+      if (!result?.ok && !result?.files) {
+        setError(result?.error || "Failed to fetch PR diff");
+        setLoading(false);
+        return;
+      }
+
+      setPrMeta(result.pr || null);
+      // ✅ Filter: only review actual files (entries with a filename that contains a dot for extension)
+      const allFiles = (result.files || []) || [];
+      const fetchedFiles = allFiles
+        .filter((f) => f?.filename && String(f.filename).includes(".")) // Only files with extensions
+        .map((f) => ({ ...f, reviewed: false, processing: false }));
+      setFiles(allFiles); // Keep all for tree display
+      setUnifiedDiff(result.unifiedDiff || "");
+      setReviewProgress({ current: 0, total: fetchedFiles.length, file: "" });
+
+      const aggregatedFindings = [];
+
+      for (let i = 0; i < fetchedFiles.length; i++) {
+        const file = fetchedFiles[i];
+        // update processing flag
+        setFiles((prev) => prev.map((p) => (p.filename === file.filename ? { ...p, processing: true } : p)));
+        setStatusMessage(`Reviewing ${i + 1}/${fetchedFiles.length}: ${file.filename}`);
+        setReviewProgress({ current: i + 1, total: fetchedFiles.length, file: file.filename || "" });
+
+        try {
+          const res = await window.api.runAIReview({ unifiedDiff: file.patch || "", files: [file] });
+          const normalized = normalizeReview(res, [file]);
+          // attach filename to findings if missing
+          const fileFindings = (normalized.findings || []).map((ff) => ({ ...ff, filename: ff.filename || file.filename }));
+
+          aggregatedFindings.push(...fileFindings);
+
+          setFiles((prev) => {
+            const next = prev.map((p) => (p.filename === file.filename ? { ...p, reviewed: true, processing: false, findings: fileFindings } : p));
+            // auto-select the first reviewed file if none selected yet
+            if (!selectedFile) {
+              const reviewedFile = next.find((x) => x.filename === file.filename);
+              if (reviewedFile) {
+                setSelectedFile(reviewedFile);
+              }
+            }
+            return next;
+          });
+        } catch (e) {
+          console.error("Per-file review failed:", e);
+          setFiles((prev) => prev.map((p) => (p.filename === file.filename ? { ...p, reviewed: false, processing: false, error: e?.message } : p)));
+        }
+      }
+
+      // set aggregated aiReview
+      setAiReview({ findings: aggregatedFindings, fileReasoning: (result.fileReasoning || {}) });
+      setStatusMessage(`Review complete: ${aggregatedFindings.length} findings across ${fetchedFiles.length} files`);
+      setShowAIReviewPopup(true);
+    } catch (e) {
+      console.error("Review PR failed:", e);
+      setError(e?.message || "Failed to review PR");
+    } finally {
+      setLoading(false);
+      setReviewProgress(null);
+    }
+  };
 	  
 
   const composeReviewEmail = () => {
@@ -413,6 +544,50 @@ useEffect(() => {
     return summaryParts.join("\n");
   };
 
+  // Compose a full markdown report for export/email
+  const composeReviewReport = (prDetails = {}, review = null) => {
+    const findings = (review?.findings || []);
+    const grouped = {};
+    findings.forEach((f) => {
+      const fn = f.filename || "(unknown)";
+      if (!grouped[fn]) grouped[fn] = [];
+      grouped[fn].push(f);
+    });
+
+    const lines = [];
+    lines.push(`# AQS Inspect - PR Review Report`);
+    lines.push("");
+    lines.push(`- PR: ${prDetails?.html_url || prMeta?.url || prUrl}`);
+    lines.push(`- Title: ${prDetails?.title || prMeta?.title || "(unknown)"}`);
+    const developer = prDetails?.createdBy || prDetails?.created_by || prDetails?.created_by_login || prDetails?.author || prMeta?.createdBy || prMeta?.created_by || "(unknown)";
+    const createdAt = prDetails?.createdAt || prDetails?.created_at || prDetails?.created || prMeta?.createdAt || prMeta?.created_at || "(unknown)";
+    lines.push(`- Developer: ${developer}`);
+    lines.push(`- PR Created: ${createdAt}`);
+    lines.push(`- Review generated: ${new Date().toISOString()}`);
+    lines.push(`- Score: ${review?.score ?? "N/A"}`);
+    lines.push("");
+    lines.push(`## Summary`);
+    lines.push(review?.summary || "No summary available.");
+    lines.push("");
+
+    lines.push(`## Findings (${findings.length})`);
+    Object.keys(grouped).forEach((fname) => {
+      lines.push("");
+      lines.push(`### ${fname}`);
+      grouped[fname].forEach((f, idx) => {
+        lines.push(`- **${f.severity}**: ${f.title}`);
+        if (f.explanation) lines.push(`  - ${f.explanation}`);
+        if (f.recommendation) lines.push(`  - Suggestion: ${f.recommendation}`);
+      });
+    });
+
+    lines.push("");
+    lines.push(`---`);
+    lines.push(`Generated by AQS Inspect`);
+
+    return lines.join("\n");
+  };
+
   const sendReviewEmail = async () => {
     if (!aiReview) {
       setError("Generate an AI review before sending email.");
@@ -420,23 +595,40 @@ useEffect(() => {
     }
 
     const smtpConfig = config?.email || config?.smtp;
-    if (!smtpConfig?.host || !smtpConfig?.port || !smtpConfig?.from || !smtpConfig?.to) {
+    if (!smtpConfig?.host || !smtpConfig?.port || !smtpConfig?.from) {
       setError("SMTP email configuration is missing or incomplete. Please configure it in Settings.");
       return;
     }
 
-    const subject = `Code Review: ${prMeta?.title || prUrl}`;
-    const body = composeReviewEmail();
-
     try {
+      // Fetch PR details (to get developer name and PR dates)
+      const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl });
+      const prDetails = prDetailsRes?.pr || {};
+
+      // Fetch user email from repo if 'to' is not configured
+      let toAddress = smtpConfig.to;
+      if (!toAddress) {
+        const emailRes = await window.api.getUserEmail({ repoType });
+        if (emailRes?.ok) {
+          toAddress = emailRes.email;
+        } else {
+          setError("Email 'to' address is not configured and could not be fetched from repository. Please configure it in Settings.");
+          return;
+        }
+      }
+
+      const subject = `Code Review: ${prDetails?.title || prMeta?.title || prUrl}`;
+      const report = composeReviewReport(prDetails, aiReview);
+
       const result = await window.api.sendEmail({
         subject,
-        body,
-        to: smtpConfig.to,
+        body: report,
+        to: toAddress,
         from: smtpConfig.from,
         replyTo: smtpConfig.replyTo,
         config: smtpConfig
       });
+
       if (!result?.ok) {
         setError(result?.error || "Failed to send review email.");
         return;
@@ -444,6 +636,48 @@ useEffect(() => {
       setStatusMessage("✅ Review email sent successfully.");
     } catch (e) {
       setError(e?.message || "Failed to send review email.");
+    }
+  };
+
+  const exportReport = async () => {
+    if (!aiReview) {
+      setError("Generate an AI review before exporting report.");
+      return;
+    }
+    try {
+      const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl });
+      const prDetails = prDetailsRes?.pr || {};
+      const md = composeReviewReport(prDetails, aiReview);
+      const filename = `AQS_Review_PR_${prDetails?.number || 'report'}.md`;
+      const saved = await window.api.saveReport({ defaultFilename: filename, content: md });
+      if (!saved?.ok) {
+        if (saved?.error && saved.error !== 'cancelled') setError(saved.error || 'Failed to save report');
+        return;
+      }
+      setStatusMessage(`✅ Report saved: ${saved.path}`);
+    } catch (e) {
+      setError(e?.message || 'Failed to export report.');
+    }
+  };
+
+  const exportReportPdf = async () => {
+    if (!aiReview) {
+      setError("Generate an AI review before exporting report.");
+      return;
+    }
+    try {
+      const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl });
+      const prDetails = prDetailsRes?.pr || prMeta || {};
+      const md = composeReviewReport(prDetails, aiReview);
+      const filename = `AQS_Review_PR_${prDetails?.number || 'report'}.pdf`;
+      const saved = await window.api.saveReportPdf({ defaultFilename: filename, content: md });
+      if (!saved?.ok) {
+        if (saved?.error && saved.error !== 'cancelled') setError(saved.error || 'Failed to save PDF report');
+        return;
+      }
+      setStatusMessage(`✅ PDF saved: ${saved.path}`);
+    } catch (e) {
+      setError(e?.message || 'Failed to export PDF report.');
     }
   };
 
@@ -622,31 +856,13 @@ useEffect(() => {
                 <option value="azure">Azure DevOps</option>
               </select>
 
-              <input
-                className="input"
-                style={{ maxWidth: 160 }}
-                type="date"
-                value={filters.createdFrom}
-                onChange={(e) => setFilters((p) => ({ ...p, createdFrom: e.target.value }))}
-                title="Created from"
-              />
-
-              <input
-                className="input"
-                style={{ maxWidth: 160 }}
-                type="date"
-                value={filters.createdTo}
-                onChange={(e) => setFilters((p) => ({ ...p, createdTo: e.target.value }))}
-                title="Created to"
-              />
-
               <select
                 className="input"
-                style={{ minWidth: 180 }}
+                style={{ maxWidth: 140 }}
                 value={filters.createdBy}
                 onChange={(e) => onSelectOwner(e.target.value)}
               >
-                <option value="">Created by (any)</option>
+                <option value="">Filter by user</option>
                 {prOwners.map((owner) => (
                   <option key={owner} value={owner}>
                     {owner}
@@ -654,25 +870,39 @@ useEffect(() => {
                 ))}
               </select>
 
-              <select
+              <input
                 className="input"
-                style={{ maxWidth: 160 }}
-                value={filters.status}
-                onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value }))}
-                title="Status"
-              >
-                <option value="all">All</option>
-                <option value="open">Open</option>
-                <option value="closed">Closed</option>
-                <option value="merged">Merged</option>
-              </select>
+                type="date"
+                value={filters.createdFrom}
+                onChange={async (e) => {
+                  const next = { ...filters, createdFrom: e.target.value };
+                  setFilters(next);
+                  await loadPRs(next);
+                }}
+                style={{ maxWidth: 140 }}
+                placeholder="From"
+                title="Filter from date"
+              />
+              <input
+                className="input"
+                type="date"
+                value={filters.createdTo}
+                onChange={async (e) => {
+                  const next = { ...filters, createdTo: e.target.value };
+                  setFilters(next);
+                  await loadPRs(next);
+                }}
+                style={{ maxWidth: 140 }}
+                placeholder="To"
+                title="Filter to date"
+              />
 
-              <button className="btn" onClick={loadPRs} disabled={prListLoading}>
+              <button className="btn primary" onClick={() => loadPRs()} disabled={prListLoading}>
                 {prListLoading ? "Loading PRs…" : "Load PRs"}
               </button>
             </div>
 
-            <div className="row" style={{ gap: 8, marginTop: 8 }}>
+            <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
               <select className="input" value={selectedPrId} onChange={(e) => onSelectPR(e.target.value)}>
                 <option value="">Select a PR…</option>
                 {prList.map((p) => (
@@ -697,7 +927,7 @@ useEffect(() => {
               </button>
             </div>
 
-            <div className="row" style={{ marginTop: 8 }}>
+            <div className="row" style={{ marginTop: 12, gap: 8, flexWrap: "wrap" }}>
               <input
                 className="input"
                 placeholder="PR URL (auto-filled from picker, editable)"
@@ -705,12 +935,8 @@ useEffect(() => {
                 onChange={(e) => setPrUrl(e.target.value)}
               />
 
-              <button className="btn primary" onClick={fetchDiff} disabled={loading}>
-                {loading ? "Fetching…" : "Fetch Diff"}
-              </button>
-
-              <button className="btn success" onClick={runAiReview} disabled={!files.length || aiLoading}>
-                {aiLoading ? "Reviewing…" : "Generate AI Review"}
+              <button className="btn primary" onClick={reviewPullRequest} disabled={loading || aiLoading}>
+                {loading || aiLoading ? "Reviewing…" : "Review Pull Request"}
               </button>
             </div>
 
@@ -729,7 +955,7 @@ useEffect(() => {
                 )}
               </div>
             )}
-            {statusMessage && !error && (
+            {statusMessage && !error && !reviewProgress?.total && (
               <div className="status-container">
                 <div className="status">{statusMessage}</div>
               </div>
@@ -776,41 +1002,36 @@ useEffect(() => {
           <div className="workarea">
             {/* Sidebar */}
             <aside className={`sidebar ${navCollapsed ? "collapsed" : ""}`}>
-              <div className={`pane-title ${navCollapsed ? "is-collapsed" : ""}`}>
-                {!navCollapsed && <span>Files</span>}
-
-                {/* ✅ Impact filter toggle */}
-                {!navCollapsed && (
-                  <button
-                    className="btn"
-                    style={{ padding: "6px 10px", fontSize: 12 }}
-                    onClick={() => setShowImpactedOnly((v) => !v)}
-                    title="Show only files that have AI review findings"
-                  >
-                    {showImpactedOnly ? "✅ Impacted Only" : "Impact Only"}
-                  </button>
-                )}
-
+              <div className="sidebar__header">
+                <div>
+                  <h2>Reviewed files</h2>
+                  <p>Browse files reviewed from the selected PR.</p>
+                </div>
                 <button
-                  className="pane-toggle"
+                  className="btn"
                   onClick={() => setNavCollapsed((v) => !v)}
                   title={navCollapsed ? "Maximize navigator" : "Minimize navigator"}
                   aria-label={navCollapsed ? "Maximize navigator" : "Minimize navigator"}
+                  style={{ minWidth: 36, padding: "8px 10px" }}
                 >
                   {navCollapsed ? "+" : "−"}
                 </button>
               </div>
 
               {!navCollapsed && (
-                <div className="pane-body sidebar-body">
-								
-					  <FileTree
-						  nodes={fileTree}
-						  selectedFile={selectedFile}
-						  statsByFile={statsByFile}
-						  onFileSelect={(file) => setSelectedFile(file)}
-						/>
-
+                <div className="sidebar-body">
+                  {files && files.length > 0 ? (
+                    <FileTree
+                      nodes={impactedTree && impactedTree.length > 0 ? impactedTree : buildFileTree(files)}
+                      selectedFile={selectedFile}
+                      statsByFile={statsByFile}
+                      onFileSelect={(file) => setSelectedFile(file)}
+                    />
+                  ) : (
+                    <div style={{ padding: 18 }} className="muted">
+                      Review a pull request to populate files here.
+                    </div>
+                  )}
                 </div>
               )}
             </aside>
@@ -886,6 +1107,9 @@ useEffect(() => {
                           <button className="btn primary" onClick={sendReviewEmail}>
                             📧 Compose Review Email
                           </button>
+                          <button className="btn" onClick={exportReportPdf}>
+                            📄 Export Report
+                          </button>
                           <button className="btn success" onClick={() => performPRAction("accept")}>
                             ✅ Accept PR
                           </button>
@@ -895,7 +1119,7 @@ useEffect(() => {
                         </div>
                       </>
                     ) : (
-                      <div className="muted">No AI findings yet. Click “Generate AI Review”.</div>
+                      <div className="muted">No AI findings yet. Click “Review Pull Request”.</div>
                     )}
                   </div>
                 )}
@@ -914,6 +1138,8 @@ useEffect(() => {
             onSelectFile={(f) => setSelectedFile(f)}
             onSelectFinding={(f) => jumpToFinding(f)}
           />
+
+          <ReviewProgressDialog progress={reviewProgress} />
         </>
       )}
     </div>
@@ -1092,6 +1318,28 @@ function AIReviewPopup({ open, onClose, findings, selectedFile, files, aiReview,
   );
 }
 
+function ReviewProgressDialog({ progress }) {
+  if (!progress || !progress.total) return null;
+  const percentage = Math.round((progress.current / progress.total) * 100);
+  return (
+    <div className="progress-overlay" aria-live="polite" role="status">
+      <div className="progress-modal">
+        <div style={{ fontSize: 18, fontWeight: 800 }}>Review in progress</div>
+        <div style={{ marginTop: 10, color: "#475569" }}>
+          Reviewing <strong>{progress.current}</strong> of <strong>{progress.total}</strong> files
+        </div>
+        <div style={{ marginTop: 18 }} className="progress-bar">
+          <div className="progress-fill" style={{ width: `${percentage}%` }} />
+        </div>
+        <div style={{ marginTop: 10, color: "#475569" }}>{percentage}% complete</div>
+        <div style={{ marginTop: 14, opacity: 0.8, fontSize: 13 }}>
+          The current file under review is: {progress.file || "Preparing..."}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* =========================================================
    Split Diff Viewer (paired rows + smart collapse + inline reviews)
    + Finding anchor registration + highlighting
@@ -1229,18 +1477,52 @@ function normalizeReview(res, files) {
   const out = res && typeof res === "object" ? res : {};
   const findings = Array.isArray(out.findings) ? out.findings : [];
 
-  // Normalize severities
-  const sevMap = { high: "critical", medium: "warning", low: "info" };
+  // Normalize severities to engine categories and uplift critical runtime issues
+  const sevMap = { high: "Blocker", critical: "Blocker", medium: "Major", low: "Minor", warning: "Major", info: "Info" };
+
+  const criticalKeywords = [
+    "divide by zero",
+    "division by zero",
+    "null pointer",
+    "nullreference",
+    "null reference",
+    "runtime error",
+    "uncaught exception",
+    "syntax error",
+    "missing cdb",
+    "missing cdb file",
+    "missing cdb artifact",
+    "stack overflow",
+    "segmentation fault"
+  ];
 
   const normalizedFindings = findings.map((f) => {
     const raw = (f.severity || f.level || "").toString().toLowerCase();
-    const sev = sevMap[raw] || raw || "info";
+    let sev = sevMap[raw] || (raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "Info");
+    const text = `${f.title || ""} ${f.explanation || f.details || ""} ${f.matchText || f.match || ""}`.toLowerCase();
+    for (const kw of criticalKeywords) {
+      if (text.includes(kw)) {
+        sev = "Blocker";
+        break;
+      }
+    }
+
+    // Basic recommendation heuristics
+    let recommendation = f.recommendation || "";
+    if (!recommendation) {
+      if (sev === "Blocker") recommendation = "Fix immediately: investigate runtime errors and add defensive checks.";
+      else if (sev === "Major") recommendation = "Address this issue: refactor or validate inputs and add tests.";
+      else if (sev === "Minor") recommendation = "Consider improvement: clean up or add validations as needed.";
+      else recommendation = "Review and assess relevance; add tests or defensive handling if needed.";
+    }
+
     return {
       title: f.title || "Finding",
       explanation: f.explanation || f.details || "",
       severity: sev,
       filename: f.filename || f.file || "",
       matchText: f.matchText || f.match || "",
+      recommendation,
     };
   });
 

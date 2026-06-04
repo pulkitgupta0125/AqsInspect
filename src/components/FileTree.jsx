@@ -55,17 +55,10 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
   // Folder rollup stats (AI + additions/deletions)
   const folderAgg = useMemo(() => {
     if (node?.type !== "folder") return null;
-
-    let critical = 0,
-      warning = 0,
-      info = 0,
-      total = 0,
-      additions = 0,
-      deletions = 0;
-
+    // keep folder aggregation minimal: only counts of severities
+    let critical = 0, warning = 0, info = 0;
     const walk = (x) => {
       if (!x) return;
-
       if (x.type === "file") {
         const p = getPath(x.fileData);
         const s = statsByFile[p];
@@ -73,18 +66,13 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
           critical += s.critical || 0;
           warning += s.warning || 0;
           info += s.info || 0;
-          total += s.total || 0;
         }
-        additions += x.fileData?.additions || 0;
-        deletions += x.fileData?.deletions || 0;
         return;
       }
-
       (x.children || []).forEach(walk);
     };
-
     walk(node);
-    return { critical, warning, info, total, additions, deletions };
+    return { critical, warning, info };
   }, [node, statsByFile]);
 
   // =========================
@@ -114,26 +102,7 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
 
           <span className="az-tree-name">{node.name}</span>
 
-          {icon ? (
-            <span className="az-tree-badge" title="AI issues in this folder">
-              {icon}
-            </span>
-          ) : null}
-
-          {changeBadge ? (
-            <span className="badge info az-tree-badge" title="Changes in this folder">
-              {changeBadge}
-            </span>
-          ) : null}
-
-          {folderAgg?.total ? (
-            <span
-              className={`badge ${badgeClass(folderAgg)} az-tree-badge`}
-              title="AI findings count (folder rollup)"
-            >
-              {folderAgg.total}
-            </span>
-          ) : null}
+          {/* Do not show severity badges for folders (only files should show severity) */}
         </div>
 
         {open && node.children?.length > 0 && (
@@ -158,10 +127,7 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
   // File node (Azure-like)
   // =========================
   const aiIcon = pickAIIcon(fileStats);
-  const changeBadge =
-    node?.fileData?.additions || node?.fileData?.deletions
-      ? `+${node.fileData.additions || 0} / -${node.fileData.deletions || 0}`
-      : "";
+  const changeBadge = "";
 
   return (
     <div
@@ -176,26 +142,7 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
 
       <span className="az-tree-name">{node.name}</span>
 
-      {aiIcon ? (
-        <span className="az-tree-badge" title="AI severity">
-          {aiIcon}
-        </span>
-      ) : null}
-
-      {changeBadge ? (
-        <span className="badge info az-tree-badge" title="Changes">
-          {changeBadge}
-        </span>
-      ) : null}
-
-      {fileStats?.total ? (
-        <span
-          className={`badge ${badgeClass(fileStats)} az-tree-badge`}
-          title="AI findings count"
-        >
-          {fileStats.total}
-        </span>
-      ) : null}
+      {aiIcon ? <span className="az-tree-badge">{aiIcon}</span> : null}
     </div>
   );
 }
