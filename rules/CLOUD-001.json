@@ -1,0 +1,13 @@
+{
+  "id": "CLOUD-001",
+  "category": "projection",
+  "severity": "Blocker",
+  "title": "Projection files must declare component and layer",
+  "description": "All Aurena projection files must declare their component and layer in the header definition.",
+  "recommendation": "Define component and layer attributes in the projection declaration block.",
+  "pattern": "",
+  "alertOnMissing": false,
+  "approved": true,
+  "source": "builtin",
+  "classification": "IFS_ERP"
+}

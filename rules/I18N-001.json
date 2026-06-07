@@ -1,0 +1,13 @@
+{
+  "id": "I18N-001",
+  "category": "all",
+  "severity": "Minor",
+  "title": "String literals must not contain non-ASCII characters",
+  "description": "Hardcoded strings containing non-ASCII characters fail translation checks and localization pipeline rules.",
+  "recommendation": "Extract non-ASCII strings to translation files (.lng, .trs) or constant resources.",
+  "pattern": "[^\\x00-\\x7F]",
+  "alertOnMissing": false,
+  "approved": true,
+  "source": "builtin",
+  "classification": "IFS_AQS"
+}

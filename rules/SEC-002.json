@@ -1,0 +1,13 @@
+{
+  "id": "SEC-002",
+  "category": "plsql",
+  "severity": "Blocker",
+  "title": "General_SYS.Init_Method prohibited in .plsql files",
+  "description": "In IFS Cloud, initialization is generated automatically. Manual invocation of General_SYS.Init_Method in .plsql files is prohibited.",
+  "recommendation": "Remove manual General_SYS.Init_Method calls from .plsql files.",
+  "pattern": "general_sys\\.init_method",
+  "alertOnMissing": false,
+  "approved": true,
+  "source": "builtin",
+  "classification": "IFS_AQS"
+}

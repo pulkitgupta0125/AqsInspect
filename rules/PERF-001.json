@@ -1,0 +1,13 @@
+{
+  "id": "PERF-001",
+  "category": "views",
+  "severity": "Major",
+  "title": "No stored function calls in view definitions",
+  "description": "Using PL/SQL function calls inside SQL view SELECT statements causes serious performance issues due to context switching.",
+  "recommendation": "Join the underlying table/view directly or utilize custom indexing/materialized views.",
+  "pattern": "select\\s+.*\\b\\w+_api\\.\\w+",
+  "alertOnMissing": false,
+  "approved": true,
+  "source": "builtin",
+  "classification": "ORACLE"
+}

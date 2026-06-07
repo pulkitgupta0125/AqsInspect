@@ -1,180 +1,134 @@
 /**
  * Hybrid Rule Engine
  * Combines deterministic enterprise rules with AI review decisions.
- * This module is the enterprise validation layer for MCP analysis.
+ * Loads rules dynamically from the rules directory and runs them.
  */
 const fs = require('fs');
 const path = require('path');
 const store = require('../configStore');
+const rulesStore = require('./rulesStore');
 const { buildDynamicRulesFromIfsCore } = require('./dynamicRuleBuilder');
-
-const DEFAULT_RULES = [
-  {
-    id: "MCP_RULE_PLSQL_INIT_METHOD",
-    category: "plsql",
-    severity: "Major",
-    title: "Ensure General_SYS.Init_Method is invoked in PL/SQL custom methods.",
-    description:
-      "Public or protected PL/SQL methods should initialize the General_SYS context before business logic.",
-    evaluate: ({ file, findings, content }) => {
-      const result = [];
-      if (!content || !content.toLowerCase().includes("general_sys.init_method")) {
-        result.push({
-          severity: "Major",
-          confidence: 0.85,
-          title: "Missing General_SYS.Init_Method call",
-          explanation:
-            "This PL/SQL file does not appear to invoke General_SYS.Init_Method, which is required for IFS safe initialization.",
-          ruleId: "MCP_RULE_PLSQL_INIT_METHOD",
-          recommendation: "Add General_SYS.Init_Method on all public/protected execution paths.",
-          lineRange: null,
-          matchText: null
-        });
-      }
-      return result;
-    }
-  },
-  {
-    id: "MCP_RULE_DML_IN_LOOPS",
-    category: "plsql",
-    severity: "Major",
-    title: "Avoid DML inside loops.",
-    description: "Database DML operations within loops can cause performance and locking issues.",
-    evaluate: ({ content }) => {
-      const result = [];
-      if (content && /for\s+.*\sin\s+.*\n[\s\S]{0,120}?\b(insert|update|delete)\b/i.test(content)) {
-        result.push({
-          severity: "Major",
-          confidence: 0.8,
-          title: "Potential DML inside a loop",
-          explanation:
-            "Detected a possible INSERT, UPDATE, or DELETE statement within a loop construct. This may cause performance issues in IFS.",
-          ruleId: "MCP_RULE_DML_IN_LOOPS",
-          recommendation: "Refactor the logic to perform bulk DML operations outside of loops when possible.",
-          lineRange: null,
-          matchText: null
-        });
-      }
-      return result;
-    }
-  },
-  {
-    id: "MCP_RULE_IFS_METADATA_MISSING",
-    category: "all",
-    severity: "Info",
-    title: "IFS metadata is unavailable.",
-    description: "Analyze impact with IFS metadata when integration is configured.",
-    evaluate: ({ ifsMetadata }) => {
-      if (!ifsMetadata || !ifsMetadata.data) {
-        return [
-          {
-            severity: "Info",
-            confidence: 0.6,
-            title: "IFS metadata missing or unreachable",
-            explanation:
-              "No IFS OData metadata could be retrieved. PR impact analysis will be based on repository heuristics only.",
-            ruleId: "MCP_RULE_IFS_METADATA_MISSING",
-            recommendation: "Verify IFS OData endpoint and credentials in Settings.",
-            lineRange: null,
-            matchText: null
-          }
-        ];
-      }
-      return [];
-    }
-  }
-  ,
-  {
-    id: "MCP_RULE_IFS_MISSING_CDB",
-    category: "all",
-    severity: "Blocker",
-    title: "Referenced .cdb file missing in IFS core",
-    description: "Detects references to .cdb artifacts and ensures they exist in the configured IFS core path.",
-    evaluate: ({ content }) => {
-      const res = [];
-      if (!content) return res;
-      const matches = Array.from(new Set((content.match(/([\w\-\/\\\.]+\.cdb)\b/gi) || [])));
-      if (!matches.length) return res;
-
-      const cfg = (store && typeof store.getConfig === 'function') ? store.getConfig() : {};
-      const corePath = String((cfg?.ifs?.corePath || cfg?.ifsCorePath) || "").trim();
-
-      for (const m of matches) {
-        const candidate = m.replace(/^[\\/]+/, "");
-        let exists = false;
-        if (corePath) {
-          const full = path.isAbsolute(candidate) ? candidate : path.join(corePath, candidate);
-          try {
-            exists = fs.existsSync(full);
-          } catch (e) {
-            exists = false;
-          }
-        }
-
-        if (!exists) {
-          res.push({
-            severity: "Blocker",
-            confidence: 0.98,
-            title: "Missing referenced .cdb artifact",
-            explanation: `Referenced CDB file ${m} was not found under configured IFS core path. This may break runtime behavior if the artifact is required.`,
-            ruleId: "MCP_RULE_IFS_MISSING_CDB",
-            recommendation: "Ensure the referenced .cdb file is present in the IFS core solution or update references.",
-            lineRange: null,
-            matchText: m
-          });
-        }
-      }
-
-      return res;
-    }
-  }
-];
 
 function evaluateRulesForFile(file, findings = [], content = "") {
   const normalizedCategory = String(file.category || "other").toLowerCase();
-  let allFindings = [];
+  const allRules = rulesStore.loadAllRules();
+  const approvedRules = allRules.filter(r => r.approved === true);
+  const fileFindings = [];
 
-  // Evaluate static/default rules
-  for (const rule of DEFAULT_RULES) {
-    if (rule.category === "all" || rule.category === normalizedCategory) {
-      try {
-        allFindings = allFindings.concat(rule.evaluate({ file, findings, content }));
-      } catch (err) {
-        // rule evaluation should not crash the review pipeline
-      }
+  const cfg = (store && typeof store.getConfig === 'function') ? store.getConfig() : {};
+  const corePath = String((cfg?.ifs?.corePath || cfg?.ifsCorePath) || "").trim();
+  const customerPath = String((cfg?.ifs?.customerPath || cfg?.ifsCustomerPath) || "").trim();
+
+  for (const rule of approvedRules) {
+    // Check category compatibility
+    if (rule.category !== "all" && rule.category !== normalizedCategory) {
+      continue;
     }
-  }
 
-  // Evaluate dynamic rules from IFS core
-  try {
-    const cfg = store && typeof store.getConfig === 'function' ? store.getConfig() : {};
-    const dynamicRulesCached = buildDynamicRulesFromIfsCore(cfg?.ifs?.corePath);
-    for (const rule of dynamicRulesCached) {
-      if (rule && rule.category === "all" || rule.category === normalizedCategory) {
+    try {
+      // 1. Custom evaluation for specific built-in rule IDs
+      if (rule.id === "ARCH-001") {
+        if (file.path) {
+          const pathLower = file.path.toLowerCase().replace(/\\/g, '/');
+          const hasCorePath = pathLower.startsWith('core/') || pathLower.includes('/core/');
+          if (hasCorePath) {
+            fileFindings.push({
+              severity: rule.severity || "Blocker",
+              confidence: 1.0,
+              title: rule.title || "Core layer file modified in customer solution",
+              explanation: `Core layer file ${file.path} was found in the customer solution repository. Modifying core layer files directly is prohibited.`,
+              ruleId: rule.id,
+              recommendation: rule.recommendation || "Move customizations to a Cust/Extension layer using overrides, events, or Custom Objects framework.",
+              lineRange: null,
+              matchText: file.path,
+              classification: rule.classification || "IFS_AQS"
+            });
+          }
+        }
+        continue;
+      }
+
+      if (rule.id === "MCP_RULE_IFS_MISSING_CDB") {
+        if (content) {
+          const matches = Array.from(new Set((content.match(/([\w\-\/\\\.]+\.cdb)\b/gi) || [])));
+          for (const m of matches) {
+            const candidate = m.replace(/^[\\/]+/, "");
+            let exists = false;
+            
+            // Check customer solution first (contains customized latest files)
+            if (customerPath) {
+              const fullCustomer = path.isAbsolute(candidate) ? candidate : path.join(customerPath, candidate);
+              try {
+                exists = fs.existsSync(fullCustomer);
+              } catch (e) {
+                exists = false;
+              }
+            }
+            
+            // Fallback to core standard solution
+            if (!exists && corePath) {
+              const fullCore = path.isAbsolute(candidate) ? candidate : path.join(corePath, candidate);
+              try {
+                exists = fs.existsSync(fullCore);
+              } catch (e) {
+                exists = false;
+              }
+            }
+
+            if (!exists) {
+              fileFindings.push({
+                severity: rule.severity || "Blocker",
+                confidence: 0.98,
+                title: rule.title || "Missing referenced .cdb artifact",
+                explanation: `Referenced CDB file ${m} was not found under configured Customer Solution path or IFS Core path. This may break runtime behavior.`,
+                ruleId: rule.id,
+                recommendation: rule.recommendation || "Ensure the referenced .cdb file is present in the Customer Solution or IFS Core solution.",
+                lineRange: null,
+                matchText: m,
+                classification: rule.classification || "IFS_AQS"
+              });
+            }
+          }
+        }
+        continue;
+      }
+
+      if (rule.id === "MCP_RULE_IFS_METADATA_MISSING") {
+        // Handled at PR validation level, skip file-level alert
+        continue;
+      }
+
+      // 2. Generic regex pattern evaluation
+      if (rule.pattern && content) {
         try {
-          allFindings = allFindings.concat(rule.evaluate({ file, findings, content }));
-        } catch (err) {
-          // dynamic rule evaluation should not crash the review pipeline
+          const regex = new RegExp(rule.pattern, "i");
+          const hasPattern = regex.test(content);
+
+          const triggerAlert = (rule.alertOnMissing && !hasPattern) || (!rule.alertOnMissing && hasPattern);
+
+          if (triggerAlert) {
+            fileFindings.push({
+              severity: rule.severity || "Major",
+              confidence: 0.85,
+              title: rule.title,
+              explanation: rule.description,
+              ruleId: rule.id,
+              recommendation: rule.recommendation || "Follow IFS guidelines to remediate.",
+              lineRange: null,
+              matchText: null,
+              classification: rule.classification || "IFS_ERP"
+            });
+          }
+        } catch (regexError) {
+          console.warn(`Invalid regex pattern in rule ${rule.id}: ${rule.pattern}`);
         }
       }
-    }
-  } catch (err) {
-    // Dynamic rules loading failure should not crash the review
-  }
-
-  // Evaluate dynamic rules built from IFS core path
-  const dynamicRules = buildDynamicRulesFromIfsCore();
-  for (const rule of dynamicRules) {
-    if (rule.category === "all" || rule.category === normalizedCategory) {
-      try {
-        allFindings = allFindings.concat(rule.evaluate({ file, findings, content }));
-      } catch (err) {
-        // dynamic rule evaluation should not crash the pipeline
-      }
+    } catch (err) {
+      console.error(`Error evaluating rule ${rule.id}:`, err.message);
     }
   }
 
-  return allFindings;
+  return fileFindings;
 }
 
 function mergeAIAndRuleFindings(aiFindings = [], ruleFindings = []) {
@@ -204,13 +158,28 @@ function validatePRImpact(prDetails = {}, ifsMetadata = {}) {
       ruleId: "MCP_RULE_PR_DETAILS_MISSING",
       recommendation: "Verify repository connection settings and PR identifier.",
       lineRange: null,
-      matchText: null
+      matchText: null,
+      classification: "IFS_ERP"
     });
     return { findings, impact: null };
   }
 
-  if (!ifsMetadata || !ifsMetadata.data) {
-    findings.push(...evaluateRulesForFile({ category: "all" }, [], "", ifsMetadata));
+  // Check if missing metadata rule is approved
+  const allRules = rulesStore.loadAllRules();
+  const metadataMissingRule = allRules.find(r => r.id === "MCP_RULE_IFS_METADATA_MISSING");
+  
+  if (metadataMissingRule?.approved && (!ifsMetadata || !ifsMetadata.data)) {
+    findings.push({
+      severity: metadataMissingRule.severity || "Info",
+      confidence: 0.7,
+      title: metadataMissingRule.title || "IFS metadata missing or unreachable",
+      explanation: "No IFS OData metadata could be retrieved. PR impact analysis is limited to local code heuristics.",
+      ruleId: "MCP_RULE_IFS_METADATA_MISSING",
+      recommendation: metadataMissingRule.recommendation || "Verify IFS OData endpoint and credentials in Settings.",
+      lineRange: null,
+      matchText: null,
+      classification: "IFS_ERP"
+    });
   }
 
   const impact = {
@@ -227,7 +196,6 @@ function validatePRImpact(prDetails = {}, ifsMetadata = {}) {
 }
 
 module.exports = {
-  DEFAULT_RULES,
   evaluateRulesForFile,
   mergeAIAndRuleFindings,
   validatePRImpact

@@ -166,68 +166,312 @@ const normalize = (s = "") =>
     .trim()
     .toLowerCase();
 
-function InlineComment({ finding }) {
+function getSeverityBorderColor(severity) {
+  const sev = String(severity || "info").toLowerCase();
+  if (sev === "critical" || sev === "blocker") return "#ef4444";
+  if (sev === "warning" || sev === "major") return "#f59e0b";
+  return "#2563eb";
+}
+
+function InlineComment({ finding, file }) {
+  const [loading, setLoading] = useState(false);
+  const [fix, setFix] = useState(null);
+  const [show, setShow] = useState(false);
+
   const sev = String(finding?.severity || "info").toLowerCase();
+  const classification = finding?.classification || "IFS_ERP";
+
+  const classThemes = {
+    IFS_AQS: {
+      borderLeft: "4px solid #7c3aed",
+      bg: "#f5f3ff",
+      color: "#6d28d9",
+      label: "Aurena Quality Standard",
+      icon: "🛡️"
+    },
+    ORACLE: {
+      borderLeft: "4px solid #ea580c",
+      bg: "#fff7ed",
+      color: "#c2410c",
+      label: "Oracle Database Rule",
+      icon: "🛢️"
+    },
+    IFS_ERP: {
+      borderLeft: "4px solid #0284c7",
+      bg: "#f0f9ff",
+      color: "#0369a1",
+      label: "IFS ERP Framework",
+      icon: "⚙️"
+    }
+  };
+
+  const theme = classThemes[classification] || classThemes.IFS_ERP;
+
+  const handleGenerateFix = async () => {
+    setLoading(true);
+    setShow(true);
+    try {
+      const res = await window.api.generateFix({
+        filename: file?.filename || "",
+        matchText: finding?.matchText || "",
+        title: finding?.title || "",
+        explanation: finding?.explanation || "",
+        filePatch: file?.patch || ""
+      });
+      setFix(res);
+    } catch (e) {
+      console.error(e);
+      setFix({ error: e.message || "Failed to generate fix" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className={`inline-comment ${sev}`}>
-      <div className="inline-hdr">
-        <span className="sev">{sev.toUpperCase()}</span>
-        <span className="ttl">{finding?.title || "Finding"}</span>
+    <div className={`inline-comment ${sev}`} style={{ ...commentStyles.card, borderLeft: theme.borderLeft }}>
+      <div className="inline-hdr" style={commentStyles.hdr}>
+        <span className="class-badge" style={{ ...commentStyles.classBadge, backgroundColor: theme.bg, color: theme.color }}>
+          {theme.icon} {theme.label}
+        </span>
+        <span className="sev" style={{ ...commentStyles.badge, borderColor: getSeverityBorderColor(sev) + "50", color: getSeverityBorderColor(sev) }}>
+          {sev.toUpperCase()}
+        </span>
+        {finding?.ruleId && (
+          <span style={commentStyles.ruleIdBadge}>
+            {finding.ruleId}
+          </span>
+        )}
       </div>
-      <div className="inline-body">{finding?.explanation || ""}</div>
+      <div className="inline-ttl" style={commentStyles.ttl}>
+        {finding?.title || "Finding"}
+      </div>
+      <div className="inline-body" style={commentStyles.body}>
+        {finding?.explanation || ""}
+      </div>
+      {finding?.recommendation && (
+        <div style={commentStyles.recommendation}>
+          <strong>Suggestion:</strong> {finding.recommendation}
+        </div>
+      )}
+
+      <div style={{ marginTop: 12 }}>
+        {!show && (
+          <button onClick={handleGenerateFix} style={commentStyles.btn}>
+            💡 Generate Auto-Fix
+          </button>
+        )}
+        {show && (
+          <div style={commentStyles.fixContainer}>
+            {loading && <div style={{ fontSize: 12, color: "#4b5563" }}>Generating smart fix with AI...</div>}
+            {!loading && fix && (
+              <>
+                {fix.error ? (
+                  <div style={{ color: "#ef4444", fontSize: 12 }}>{fix.error}</div>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, fontWeight: "bold", color: "#4f46e5" }}>AI SUGGESTED FIX:</span>
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(fix.suggestedFix);
+                          alert("Fix copied to clipboard!");
+                        }}
+                        style={commentStyles.copyBtn}
+                      >
+                        📋 Copy Fix
+                      </button>
+                    </div>
+                    <pre style={commentStyles.pre}>{fix.suggestedFix}</pre>
+                    {fix.notes && (
+                      <div style={{ fontSize: 11, color: "#666", marginTop: 4, fontStyle: "italic" }}>
+                        Note: {fix.notes}
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+            <button onClick={() => setShow(false)} style={commentStyles.closeBtn}>
+              Hide Fix
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-/**
- * ✅ DiffViewer (Final)
- * - Auto-loads full file when diff is truncated/omitted
- * - Keeps existing modes, folding, and twin horizontal scrollbars
- */
+const commentStyles = {
+  card: {
+    padding: 14,
+    borderRadius: 8,
+    background: "#f8fafc",
+    border: "1px solid rgba(148, 163, 184, 0.25)",
+    boxShadow: "0 4px 12px rgba(15, 23, 42, 0.05)",
+    textAlign: "left",
+    margin: "8px 0"
+  },
+  hdr: {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+    marginBottom: 8,
+    flexWrap: "wrap"
+  },
+  classBadge: {
+    fontSize: 10,
+    fontWeight: "bold",
+    padding: "3px 8px",
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4
+  },
+  badge: {
+    fontSize: 10,
+    fontWeight: "bold",
+    padding: "2px 6px",
+    background: "#fff",
+    borderRadius: 4,
+    border: "1px solid rgba(0,0,0,0.06)"
+  },
+  ruleIdBadge: {
+    fontSize: 10,
+    color: "#64748b",
+    marginLeft: "auto",
+    background: "#f1f5f9",
+    padding: "2px 6px",
+    borderRadius: 4,
+    fontFamily: "monospace"
+  },
+  ttl: {
+    fontWeight: "bold",
+    fontSize: 14,
+    color: "#0f172a",
+    marginBottom: 6
+  },
+  body: {
+    fontSize: 13,
+    color: "#334155",
+    lineHeight: 1.5
+  },
+  recommendation: {
+    marginTop: 8,
+    fontSize: 12.5,
+    color: "#2563eb",
+    background: "#eff6ff",
+    padding: 8,
+    borderRadius: 6,
+    borderLeft: "3px solid #3b82f6"
+  },
+  btn: {
+    background: "#4f46e5",
+    color: "#fff",
+    border: "none",
+    padding: "6px 12px",
+    borderRadius: 6,
+    fontSize: 12,
+    fontWeight: "600",
+    cursor: "pointer",
+    boxShadow: "0 2px 6px rgba(79, 70, 229, 0.15)"
+  },
+  fixContainer: {
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 8
+  },
+  pre: {
+    fontFamily: 'Consolas, Monaco, "Andale Mono", monospace',
+    fontSize: 12,
+    background: "#0f172a",
+    color: "#f8fafc",
+    padding: 10,
+    borderRadius: 6,
+    overflowX: "auto",
+    margin: "6px 0"
+  },
+  copyBtn: {
+    background: "#f1f5f9",
+    border: "1px solid #cbd5e1",
+    padding: "3px 8px",
+    borderRadius: 4,
+    fontSize: 11,
+    cursor: "pointer"
+  },
+  closeBtn: {
+    background: "transparent",
+    border: "none",
+    color: "#64748b",
+    fontSize: 11,
+    cursor: "pointer",
+    marginTop: 6,
+    textDecoration: "underline"
+  }
+};
+
+const toolbarStyles = {
+  segmentedGroup: {
+    display: "inline-flex",
+    background: "#f1f5f9",
+    padding: 4,
+    borderRadius: 8,
+    border: "1px solid #cbd5e1"
+  },
+  segmentedBtn: {
+    padding: "6px 12px",
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
+    border: "none",
+    background: "transparent",
+    borderRadius: 6,
+    cursor: "pointer",
+    transition: "all 0.15s ease"
+  },
+  segmentedBtnActive: {
+    background: "#ffffff",
+    color: "#0f172a",
+    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)"
+  }
+};
+
 export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
-  const [mode, setMode] = useState("modified"); // inline | side | modified
+  const [mode, setMode] = useState("side"); // inline | side | modified
   const [expandedFolds, setExpandedFolds] = useState(() => new Set());
 
   const surfaceRef = useRef(null);
-  const oldBarRef = useRef(null);
-  const newBarRef = useRef(null);
   const toolbarRef = useRef(null);
-
-  const [scrollMetrics, setScrollMetrics] = useState({ oldMax: 0, newMax: 0, oldViewport: 0, newViewport: 0 });
 
   const [showFull, setShowFull] = useState(false);
   const [fullText, setFullText] = useState("");
   const [fullLoading, setFullLoading] = useState(false);
   const [fullError, setFullError] = useState("");
   const [fullScreenMode, setFullScreenMode] = useState(false);
-  const [modeDropdown, setModeDropdown] = useState(false);
 
-  // ✅ Auto-load state (prevents repeated auto fetch)
-  const autoLoadedKeyRef = useRef(""); // stores `${filename}::${side}` for last auto-load
   const [autoLoaded, setAutoLoaded] = useState(false);
+  const autoLoadedKeyRef = useRef("");
 
   const patch = file?.patch || "";
   const status = String(file?.status || "modified").toLowerCase();
   const omitted = status !== "added" && isLargeOmitted(patch);
 
-  // Default mode like Azure:
-  // - added → inline content
-  // - else → modified mode
   useEffect(() => {
     if (!file) return;
-    if (status === "added") setMode("inline");
-    else setMode("modified");
+    if (status === "added") {
+      setMode("inline");
+    } else {
+      setMode((prev) => (prev === "inline" ? "side" : prev));
+    }
     setExpandedFolds(new Set());
 
-    // reset full panel state when file changes
     setShowFull(false);
     setFullText("");
     setFullError("");
     setFullLoading(false);
-
-    // reset auto flag for new file
     setAutoLoaded(false);
-  }, [file?.filename]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [file?.filename]);
 
   const hunks = useMemo(() => splitIntoHunksUnified(patch), [patch]);
 
@@ -236,18 +480,7 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
     return (findings || []).filter((f) => !f?.filename || String(f.filename) === fname);
   }, [findings, file?.filename]);
 
-  // If findings exist for this file, prefer hunks that contain the finding matchText
-  const toRenderHunks = useMemo(() => {
-    if (!findingsForFile || !findingsForFile.length) return hunks;
-    const texts = findingsForFile.map((f) => String(f.matchText || "").toLowerCase()).filter(Boolean);
-    if (!texts.length) return hunks;
-    const matched = hunks.filter((h) => {
-      const hay = String((h.lines || []).join("\n")).toLowerCase();
-      return texts.some((t) => t && hay.includes(t));
-    });
-    return matched.length ? matched : hunks;
-  }, [hunks, findingsForFile]);
-
+  const toRenderHunks = hunks;
   const findingsCount = findingsForFile.length;
 
   const toggleFold = (foldId) => {
@@ -259,9 +492,6 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
     });
   };
 
-  const applyOldX = (x) => surfaceRef.current?.style?.setProperty("--oldX", String(x || 0));
-  const applyNewX = (x) => surfaceRef.current?.style?.setProperty("--newX", String(x || 0));
-
   const requestFullLatest = async (side = "new", { forceOpen = true } = {}) => {
     setFullError("");
     setFullLoading(true);
@@ -270,7 +500,7 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
     if (forceOpen) setShowFull(true);
 
     try {
-      if (!onRequestFullFile) throw new Error("Full file API not wired (onRequestFullFile is missing).");
+      if (!onRequestFullFile) throw new Error("Full file API not wired.");
       const txt = await onRequestFullFile(file, side);
       setFullText(txt || "");
     } catch (e) {
@@ -280,11 +510,6 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
     }
   };
 
-  /**
-   * ✅ AUTO LOAD: if diff is omitted/truncated, auto-fetch the full file once.
-   * - removed files → base (old)
-   * - others → latest (new)
-   */
   useEffect(() => {
     if (!file?.filename) return;
     if (!omitted) return;
@@ -293,54 +518,18 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
     const side = status === "removed" ? "old" : "new";
     const key = `${file.filename}::${side}`;
 
-    // Prevent repeated auto fetch for the same file+side
     if (autoLoadedKeyRef.current === key) return;
     autoLoadedKeyRef.current = key;
 
-    // If user already opened full panel manually, don't fight them; but still load if empty.
     if (autoLoaded) return;
-
     setAutoLoaded(true);
 
-    // Automatically open & load full file
     requestFullLatest(side, { forceOpen: true });
-    // Optional: inline mode gives a better "full text" read if user switches back
     setMode("inline");
-  }, [file?.filename, omitted, status, onRequestFullFile]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Measure max content widths (for Azure-style bottom horizontal scrollbars)
-  useEffect(() => {
-    if (!surfaceRef.current) return;
-    if (mode === "inline") return;
-
-    const root = surfaceRef.current;
-
-    requestAnimationFrame(() => {
-      const oldEls = Array.from(root.querySelectorAll(".cell.old .code-inner"));
-      const newEls = Array.from(root.querySelectorAll(".cell.neu .code-inner"));
-
-      const oldMax = oldEls.reduce((m, n) => Math.max(m, n.scrollWidth || 0), 0);
-      const newMax = newEls.reduce((m, n) => Math.max(m, n.scrollWidth || 0), 0);
-
-      const oldViewportEl = root.querySelector(".cell.old .code");
-      const newViewportEl = root.querySelector(".cell.neu .code");
-
-      const oldViewport = oldViewportEl?.clientWidth || 0;
-      const newViewport = newViewportEl?.clientWidth || 0;
-
-      setScrollMetrics({ oldMax, newMax, oldViewport, newViewport });
-
-      // reset scrollbars
-      if (oldBarRef.current) oldBarRef.current.scrollLeft = 0;
-      if (newBarRef.current) newBarRef.current.scrollLeft = 0;
-      root.style.setProperty("--oldX", "0");
-      root.style.setProperty("--newX", "0");
-    });
-  }, [mode, file?.filename, patch]);
+  }, [file?.filename, omitted, status, onRequestFullFile]);
 
   if (!file) return <div className="empty">Select a file to view diff</div>;
 
-  // Added files: show full file (Azure-like behavior)
   const addedFull = status === "added" ? extractAddedFileContentFromPatch(patch) : "";
 
   return (
@@ -350,36 +539,23 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
 
       <div className="diff-toolbar sticky" ref={toolbarRef}>
         <div className="diff-toolbar__left">
-          <div className="mode-dropdown-wrapper">
-            <button 
-              className="mode-btn mode-dropdown-toggle" 
-              onClick={() => setModeDropdown(!modeDropdown)}
-              title="Change view mode"
-            >
-              {mode === "inline" ? "Inline" : mode === "side" ? "Side" : "Modified"} ▾
-            </button>
-            {modeDropdown && (
-              <div className="mode-dropdown-menu">
-                <button 
-                  className={`mode-dropdown-item ${mode === "inline" ? "active" : ""}`} 
-                  onClick={() => { setMode("inline"); setModeDropdown(false); }}
-                >
-                  Inline
-                </button>
-                <button 
-                  className={`mode-dropdown-item ${mode === "side" ? "active" : ""}`} 
-                  onClick={() => { setMode("side"); setModeDropdown(false); }}
-                >
-                  Side by Side
-                </button>
-                <button 
-                  className={`mode-dropdown-item ${mode === "modified" ? "active" : ""}`} 
-                  onClick={() => { setMode("modified"); setModeDropdown(false); }}
-                >
-                  Modified
-                </button>
-              </div>
-            )}
+          <div className="segmented-control" style={toolbarStyles.segmentedGroup}>
+            {[
+              { id: "inline", label: "Unified" },
+              { id: "side", label: "Split" },
+              { id: "modified", label: "Changes Only" }
+            ].map((btn) => (
+              <button
+                key={btn.id}
+                onClick={() => setMode(btn.id)}
+                style={{
+                  ...toolbarStyles.segmentedBtn,
+                  ...(mode === btn.id ? toolbarStyles.segmentedBtnActive : {})
+                }}
+              >
+                {btn.label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -428,10 +604,8 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
         </div>
       )}
 
-      {/* Added file: show full content from patch */}
       {status === "added" && addedFull && <pre className="az-addedfile">{addedFull}</pre>}
 
-      {/* Missing/omitted patch */}
       {status !== "added" && omitted && !showFull && (
         <div className="empty" style={{ padding: 12 }}>
           Diff is not available (omitted/truncated).
@@ -443,164 +617,141 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
           ) : (
             <>
               {" "}
-              Wire <b>onRequestFullFile</b> (calls <b>window.api.getFileContent</b>) to enable full-file loading.
+              Wire <b>onRequestFullFile</b> to enable full-file loading.
             </>
           )}
         </div>
       )}
 
-      {/* Normal diff render */}
       {!omitted && status !== "added" && (
-        <>
-          {toRenderHunks.map((h, hIdx) => {
-            const pairedAll = buildSplitRowsFromHunk(h.header, h.lines).map((r, idx) => ({ ...r, origIndex: idx }));
-            const paired = mode === "modified" ? pairedAll.filter((r) => r.kind !== "ctx") : pairedAll;
+        <table className={`diff-table mode-${mode}`}>
+          {mode !== "inline" && (
+            <thead>
+              <tr className="split-head-row">
+                <th colSpan={2} className="coltitle-cell" style={{ textAlign: "center", textTransform: "uppercase", padding: "6px 12px", fontSize: "11px", color: "var(--text-dim)", background: "var(--surface-alt)", borderBottom: "1px solid var(--border-light)" }}>Old</th>
+                <th colSpan={2} className="coltitle-cell" style={{ textAlign: "center", textTransform: "uppercase", padding: "6px 12px", fontSize: "11px", color: "var(--text-dim)", background: "var(--surface-alt)", borderBottom: "1px solid var(--border-light)" }}>New</th>
+              </tr>
+            </thead>
+          )}
+          <tbody>
+            {toRenderHunks.map((h, hIdx) => {
+              const pairedAll = buildSplitRowsFromHunk(h.header, h.lines).map((r, idx) => ({ ...r, origIndex: idx }));
+              const paired = mode === "modified" ? pairedAll.filter((r) => r.kind !== "ctx") : pairedAll;
 
-            // If there are findings for this file, compute allowed row indices (match + context)
-            let allowedRowSet = null;
-            if (findingsForFile && findingsForFile.length) {
-              allowedRowSet = new Set();
-              const norms = findingsForFile
-                .map((f) => normalize(String(f.matchText || "")))
-                .filter(Boolean);
-              for (let i = 0; i < paired.length; i++) {
-                const r = paired[i];
-                const joined = `${r.left || ""}\n${r.right || ""}`;
-                const jn = normalize(joined);
-                if (norms.some((n) => n && jn.includes(n) )) {
-                  // include context +/- 2 rows
-                  for (let k = Math.max(0, i - 2); k <= Math.min(paired.length - 1, i + 2); k++) allowedRowSet.add(paired[k].origIndex);
-                }
+              let displayItems;
+              if (mode === "modified") {
+                displayItems = paired.map((row) => ({ type: "row", row }));
+              } else {
+                displayItems = buildSmartCollapsedItems(paired, hIdx, expandedFolds);
               }
-            }
 
-            let displayItems;
-            if (mode === "modified") {
-              // simple mapping; if allowedRowSet exists, filter by it
-              const rows = paired.filter((row) => !allowedRowSet || allowedRowSet.has(row.origIndex));
-              displayItems = rows.map((row) => ({ type: "row", row }));
-            } else {
-              // collapsed mode: build items, then filter by allowed set if present
-              const items = buildSmartCollapsedItems(paired, hIdx, expandedFolds);
-              if (!allowedRowSet) displayItems = items;
-              else displayItems = items.filter((it) => it.type === "fold" ? false : allowedRowSet.has(it.row.origIndex));
-            }
+              const rows = [];
 
-            return (
-              <div key={hIdx} className="hunk">
-                <div className="sticky hunk-header">{h.header}</div>
+              // Hunk header row
+              rows.push(
+                <tr key={`hunk-hdr-${hIdx}`} className="hunk-header-row">
+                  <td colSpan={mode === "inline" ? 3 : 4} className="hunk-header-cell">
+                    {h.header}
+                  </td>
+                </tr>
+              );
 
-                {mode !== "inline" && (
-                  <div className="split-head">
-                    <div className="coltitle">Old</div>
-                    <div className="coltitle">New</div>
-                  </div>
-                )}
-
-                {displayItems.map((item, idx) => {
-                  if (item.type === "fold") {
-                    return (
-                      <div key={`fold-${item.foldId}-${idx}`} className="fold-row">
+              displayItems.forEach((item, idx) => {
+                if (item.type === "fold") {
+                  rows.push(
+                    <tr key={`fold-${item.foldId}-${idx}`} className="fold-row">
+                      <td colSpan={mode === "inline" ? 3 : 4} className="fold-cell">
                         <button className="fold-btn" onClick={() => toggleFold(item.foldId)}>
                           Show {item.count} unchanged lines
                         </button>
-                      </div>
-                    );
-                  }
-
-                  const r = item.row;
-                  const joined = `${r.left || ""}\n${r.right || ""}`;
-                  const joinedNorm = normalize(joined);
-
-                  const matched = findingsForFile.filter((f) => {
-                    const mt = String(f?.matchText || "").trim();
-                    if (!mt) return false;
-                    const mNorm = normalize(mt);
-                    if (!mNorm) return false;
-                    return joinedNorm.includes(mNorm) || (mNorm.length >= 12 && joinedNorm.includes(mNorm.slice(0, 24)));
-                  });
-
-                  // Inline mode
-                  if (mode === "inline") {
-                    const marker = r.kind === "add" ? "+" : r.kind === "del" ? "-" : " ";
-                    const text = r.kind === "del" ? r.left || "" : r.right || r.left || "";
-
-                    return (
-                      <div key={`in-${hIdx}-${r.origIndex}-${idx}`} className={`inline-row ${r.kind}`}>
-                        <div className="inline-ln">{r.oldNo ?? ""}</div>
-                        <div className="inline-ln">{r.newNo ?? ""}</div>
-                        <div className="inline-code">
-                          <span className="inline-marker">{marker}</span>
-                          <span className="inline-text">{text}</span>
-                        </div>
-
-                        {matched.map((f, fIdx) => (
-                          <div key={`in-c-${fIdx}`} className="inline-comment-row">
-                            <InlineComment finding={f} />
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  }
-
-                  // Side/Modified mode
-                  return (
-                    <div key={`${hIdx}-${r.origIndex}-${idx}`} className={`split-row ${r.kind}`}>
-                      <div className="cell old">
-                        <div className="ln">{r.oldNo ?? ""}</div>
-                        <div className="code">
-                          <span className="code-inner">{r.left || ""}</span>
-                        </div>
-                      </div>
-
-                      <div className="cell neu">
-                        <div className="ln">{r.newNo ?? ""}</div>
-                        <div className="code">
-                          <span className="code-inner">{r.right || ""}</span>
-                        </div>
-                      </div>
-
-                      {r.noNewline && <div className="no-newline-row">\\ No newline at end of file</div>}
-
-                      {matched.map((f, fIdx) => (
-                        <div key={`c-${fIdx}`} className="inline-comment-row">
-                          <InlineComment finding={f} />
-                        </div>
-                      ))}
-                    </div>
+                      </td>
+                    </tr>
                   );
-                })}
-              </div>
-            );
-          })}
+                  return;
+                }
 
-          {/* Azure-like twin horizontal scrollbars */}
-          {mode !== "inline" && (
-            <div className="az-hscrollbar-row sticky">
-              <div
-                className="az-hscroll old"
-                ref={oldBarRef}
-                onScroll={(e) => applyOldX(e.currentTarget.scrollLeft)}
-                title="Old file horizontal scroll"
-              >
-                <div style={{ width: Math.max(scrollMetrics.oldMax, scrollMetrics.oldViewport) }} />
-              </div>
+                const r = item.row;
+                const joined = `${r.left || ""}\n${r.right || ""}`;
+                const joinedNorm = normalize(joined);
 
-              <div
-                className="az-hscroll neu"
-                ref={newBarRef}
-                onScroll={(e) => applyNewX(e.currentTarget.scrollLeft)}
-                title="New file horizontal scroll"
-              >
-                <div style={{ width: Math.max(scrollMetrics.newMax, scrollMetrics.newViewport) }} />
-              </div>
-            </div>
-          )}
-        </>
+                const matched = findingsForFile.filter((f) => {
+                  const mt = String(f?.matchText || "").trim();
+                  if (!mt) return false;
+                  const mNorm = normalize(mt);
+                  if (!mNorm) return false;
+                  return joinedNorm.includes(mNorm) || (mNorm.length >= 12 && joinedNorm.includes(mNorm.slice(0, 24)));
+                });
+
+                if (mode === "inline") {
+                  const marker = r.kind === "add" ? "+" : r.kind === "del" ? "-" : " ";
+                  const text = r.kind === "del" ? r.left || "" : r.right || r.left || "";
+
+                  rows.push(
+                    <tr key={`in-${hIdx}-${r.origIndex}-${idx}`} className={`inline-row ${r.kind}`}>
+                      <td className="inline-ln-cell">{r.oldNo ?? ""}</td>
+                      <td className="inline-ln-cell">{r.newNo ?? ""}</td>
+                      <td className={`inline-code-cell ${r.kind}`}>
+                        <span className="inline-marker">{marker}</span>
+                        <span className="inline-text">{text}</span>
+                      </td>
+                    </tr>
+                  );
+
+                  matched.forEach((f, fIdx) => {
+                    rows.push(
+                      <tr key={`in-c-${fIdx}`} className="comment-row">
+                        <td colSpan={3} className="comment-cell">
+                          <InlineComment finding={f} file={file} />
+                        </td>
+                      </tr>
+                    );
+                  });
+                } else {
+                  const leftText = r.left ? r.left.slice(1) : "";
+                  const rightText = r.right ? r.right.slice(1) : "";
+
+                  rows.push(
+                    <tr key={`${hIdx}-${r.origIndex}-${idx}`} className={`split-row ${r.kind}`}>
+                      <td className="split-ln-cell old">{r.oldNo ?? ""}</td>
+                      <td className={`split-code-cell old ${r.kind}`}>
+                        {leftText}
+                      </td>
+                      <td className="split-ln-cell new">{r.newNo ?? ""}</td>
+                      <td className={`split-code-cell new ${r.kind}`}>
+                        {rightText}
+                      </td>
+                    </tr>
+                  );
+
+                  if (r.noNewline) {
+                    rows.push(
+                      <tr key={`no-newline-${hIdx}-${r.origIndex}`} className="no-newline-row">
+                        <td colSpan={4} className="no-newline-cell">
+                          \ No newline at end of file
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  matched.forEach((f, fIdx) => {
+                    rows.push(
+                      <tr key={`c-${fIdx}`} className="comment-row">
+                        <td colSpan={4} className="comment-cell">
+                          <InlineComment finding={f} file={file} />
+                        </td>
+                      </tr>
+                    );
+                  });
+                }
+              });
+
+              return rows;
+            })}
+          </tbody>
+        </table>
       )}
     </div>
 
-    {/* Full-Screen Modal for Source Code */}
     {fullScreenMode && (
       <div className="fullscreen-overlay">
         <div className="fullscreen-container">

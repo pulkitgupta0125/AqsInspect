@@ -1,16 +1,17 @@
 /**
  * Review Orchestrator Module
- * Coordinates file discovery, classification, 2-pass analysis (static + LLM),
+ * Coordinates file discovery, classification, multi-agent review,
  * and report generation with map-reduce consolidation for large repos
  */
 
 const fs = require("fs");
+const path = require("path");
 const { promisify } = require("util");
 const fileDiscovery = require("./fileDiscovery");
 const fileClassifier = require("./fileClassifier");
 const staticAnalyzer = require("./staticAnalyzer");
 const ruleEngine = require("./ruleEngine");
-const { buildLLMPrompt } = require("./prompts");
+const agents = require("./agents");
 
 const readfileAsync = promisify(fs.readFile);
 
@@ -18,80 +19,65 @@ const readfileAsync = promisify(fs.readFile);
 const reviewCache = {};
 
 function hashContent(content) {
-  // Simple hash for caching (in production, use crypto.createHash)
   let hash = 0;
   for (let i = 0; i < content.length; i++) {
     const char = content.charCodeAt(i);
     hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32bit integer
+    hash = hash & hash;
   }
   return hash.toString(36);
 }
 
-function extractJson(text) {
-  if (!text) return null;
-  const trimmed = String(text).trim();
+function getClassificationFallback(finding) {
+  if (finding.classification && ["IFS_AQS", "ORACLE", "IFS_ERP"].includes(finding.classification)) {
+    return finding.classification;
+  }
+  const ruleId = String(finding.ruleId || "").toUpperCase();
+  const title = String(finding.title || "").toUpperCase();
+  const explanation = String(finding.explanation || "").toUpperCase();
 
-  try {
-    return JSON.parse(trimmed);
-  } catch (_) {}
-
-  const fenced = trimmed.match(/```json([\s\S]*?)```/i);
-  if (fenced && fenced[1]) {
-    try {
-      return JSON.parse(fenced[1].trim());
-    } catch (_) {}
+  if (
+    ruleId.includes("AQS") ||
+    ruleId.includes("INIT_METHOD") ||
+    ruleId.includes("TABLE_ACCESS") ||
+    ruleId.includes("CURSOR_NAMING") ||
+    ruleId.includes("COMMENT") ||
+    ruleId.includes("PLURAL") ||
+    ruleId.includes("STANDARDS") ||
+    ruleId.includes("OVERTAKE") ||
+    ruleId.includes("UPGRADE") ||
+    ruleId.includes("CDB") ||
+    title.includes("INIT_METHOD") ||
+    title.includes("NAMING CONVENTION") ||
+    title.includes("OVERTAKE") ||
+    title.includes("DOCUMENTATION") ||
+    explanation.includes("INIT_METHOD")
+  ) {
+    return "IFS_AQS";
   }
 
-  const objMatch = trimmed.match(/\{[\s\S]*\}/);
-  if (objMatch) {
-    try {
-      return JSON.parse(objMatch[0]);
-    } catch (_) {}
+  if (
+    ruleId.includes("SYNTAX") ||
+    ruleId.includes("DML_IN_LOOP") ||
+    ruleId.includes("LOGIC_001") || 
+    ruleId.includes("LOGIC_002") || 
+    ruleId.includes("LOGIC_005") || 
+    ruleId.includes("LOGIC_006") || 
+    ruleId.includes("LOGIC_007") || 
+    title.includes("SYNTAX") ||
+    title.includes("SEMICOLON") ||
+    title.includes("BEGIN/END") ||
+    title.includes("UNCLOSED") ||
+    title.includes("PRAGMA") ||
+    title.includes("EXCEPTION") ||
+    title.includes("LOOP") ||
+    title.includes("NULL POINTER") ||
+    title.includes("CURSOR")
+  ) {
+    return "ORACLE";
   }
 
-  return null;
-}
-
-function buildLLMRequest(file, fileContent, llmConfig) {
-  const prompt = buildLLMPrompt(file.category || "generic", fileContent, file.path, file.size);
-  const provider = (llmConfig.provider || "azure").toLowerCase();
-  const temperature = typeof llmConfig.temperature === "number" ? llmConfig.temperature : 0.2;
-  const messages = [
-    { role: "system", content: prompt.system },
-    { role: "user", content: prompt.user }
-  ];
-
-  if (provider === "openai") {
-    return {
-      url: "https://api.openai.com/v1/chat/completions",
-      headers: {
-        Authorization: `Bearer ${llmConfig.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: {
-        model: llmConfig.model,
-        messages,
-        temperature,
-        max_tokens: 1200
-      }
-    };
-  }
-
-  const endpoint = String(llmConfig.endpoint || "").replace(/\/$/, "");
-  const apiVersion = llmConfig.apiVersion || "2024-02-15-preview";
-  return {
-    url: `${endpoint}/openai/deployments/${llmConfig.model}/chat/completions?api-version=${apiVersion}`,
-    headers: {
-      "api-key": llmConfig.apiKey,
-      "Content-Type": "application/json"
-    },
-    body: {
-      messages,
-      temperature,
-      max_tokens: 1200
-    }
-  };
+  return "IFS_ERP";
 }
 
 /**
@@ -173,8 +159,7 @@ async function runRuleAnalysis(files, progressCallback = null) {
 }
 
 /**
- * Phase 3: LLM Review (per-category prompts)
- * Calls the configured LLM using category-specific prompts for each file.
+ * Phase 3: Multi-Agent Review
  */
 async function prepareLLMReviewBatch(
   files,
@@ -195,7 +180,7 @@ async function prepareLLMReviewBatch(
 
       if (progressCallback) {
         progressCallback({
-          phase: "llm",
+          phase: "agents",
           processed: fileIndex,
           total: totalFiles,
           currentFile: file.path,
@@ -216,7 +201,7 @@ async function prepareLLMReviewBatch(
           continue;
         }
 
-        if (file.size > 10 * 1024) {
+        if (file.size > 15 * 1024) {
           findings.push({
             file,
             findings: [
@@ -224,9 +209,10 @@ async function prepareLLMReviewBatch(
                 severity: "Info",
                 confidence: 1.0,
                 title: "File too large for LLM review",
-                explanation: `File size ${file.size} bytes exceeds 10KB limit. Review via static analysis only.`,
+                explanation: `File size ${file.size} bytes exceeds 15KB limit. Review via static analysis only.`,
                 ruleId: "SYS_FILE_TOO_LARGE",
-                recommendation: "Split into smaller modules or use static analysis findings"
+                recommendation: "Split into smaller modules or use static analysis findings",
+                classification: "IFS_ERP"
               }
             ],
             cached: false
@@ -234,45 +220,22 @@ async function prepareLLMReviewBatch(
           continue;
         }
 
-        const { url, headers, body } = buildLLMRequest(file, content, llmConfig);
-        const res = await llmPostFunction(url, body, headers);
-        const contentResponse = res?.data?.choices?.[0]?.message?.content || "";
-        const parsed = extractJson(contentResponse);
-
-        if (!parsed || !Array.isArray(parsed.findings)) {
-          findings.push({
-            file,
-            findings: [
-              {
-                severity: "Info",
-                confidence: 0.4,
-                title: "LLM review returned invalid JSON",
-                explanation:
-                  "The LLM response could not be parsed into structured findings. Please retry with a smaller file or adjust the model configuration.",
-                ruleId: "SYS_LLM_PARSE_ERROR",
-                recommendation: "Verify the LLM model and prompt configuration."
-              }
-            ],
-            raw: contentResponse,
-            cached: false
-          });
-          continue;
-        }
-
-        const fileFindings = parsed.findings.map((finding) => ({
+        // Delegate code review to the Multi-Agent System
+        const agentResult = await agents.delegateReview(file, content, llmConfig, llmPostFunction);
+        const fileFindings = (agentResult.findings || []).map((finding) => ({
           ...finding,
           file
         }));
 
         reviewCache[file.path] = {
           hash,
-          review: { findings: fileFindings, summary: parsed.summary || {} }
+          review: { findings: fileFindings, summary: { score: 90 } }
         };
 
         findings.push({
           file,
           findings: fileFindings,
-          summary: parsed.summary || {},
+          summary: { score: 90 },
           cached: false
         });
       } catch (e) {
@@ -290,11 +253,9 @@ async function prepareLLMReviewBatch(
 function generateReport(staticFindings, llmFindings, ruleFindings, repoStats) {
   const allFindings = [];
 
-  // Normalize severities and uplift critical runtime issues
   function normalizeSeverity(finding) {
     if (!finding) return "Info";
     const raw = String(finding.severity || finding.level || "").toLowerCase();
-    // mapping common terms to engine categories
     const map = {
       blocker: "Blocker",
       critical: "Blocker",
@@ -375,6 +336,23 @@ function generateReport(staticFindings, llmFindings, ruleFindings, repoStats) {
     }
   }
 
+  // Enforce 3-tier sorting hierarchy
+  allFindings.forEach(f => {
+    f.classification = f.classification || getClassificationFallback(f);
+  });
+
+  const classificationOrder = {
+    "IFS_AQS": 1,
+    "ORACLE": 2,
+    "IFS_ERP": 3
+  };
+
+  allFindings.sort((a, b) => {
+    const valA = classificationOrder[a.classification] || 99;
+    const valB = classificationOrder[b.classification] || 99;
+    return valA - valB;
+  });
+
   // Aggregate statistics
   const severityCounts = { Blocker: 0, Major: 0, Minor: 0, Info: 0 };
   const risksByFile = {};
@@ -391,7 +369,6 @@ function generateReport(staticFindings, llmFindings, ruleFindings, repoStats) {
     }
     risksByFile[fileName].push(finding);
 
-    // Track top issues
     if (sev === "Blocker" || sev === "Major") {
       topIssues.push({
         title: finding.title,
@@ -422,8 +399,6 @@ function generateReport(staticFindings, llmFindings, ruleFindings, repoStats) {
 }
 
 function calculateOverallScore(severityCounts) {
-  // Score calculation: Blockers -50, Majors -20, Minors -5, Info 0
-  // Max 100, min 0
   const blockerPenalty = (severityCounts.Blocker || 0) * 50;
   const majorPenalty = (severityCounts.Major || 0) * 20;
   const minorPenalty = (severityCounts.Minor || 0) * 5;
@@ -470,7 +445,6 @@ async function reviewRepository(repoRoot, options = {}) {
     options;
 
   try {
-    // Phase 1: Discovery & Classification
     if (progressCallback) {
       progressCallback({ phase: "discovery", status: "starting" });
     }
@@ -484,7 +458,6 @@ async function reviewRepository(repoRoot, options = {}) {
       });
     }
 
-    // Phase 2: Static Analysis
     if (progressCallback) {
       progressCallback({ phase: "static", status: "starting" });
     }
@@ -497,7 +470,6 @@ async function reviewRepository(repoRoot, options = {}) {
       progressCallback({ phase: "static", status: "complete" });
     }
 
-    // Phase 2b: Rule Engine
     if (progressCallback) {
       progressCallback({ phase: "rules", status: "starting" });
     }
@@ -506,7 +478,6 @@ async function reviewRepository(repoRoot, options = {}) {
       progressCallback({ phase: "rules", status: "complete" });
     }
 
-    // Phase 3: LLM Review (if LLM function provided)
     let llmResults = { findings: [] };
     if (llmPostFunction) {
       if (progressCallback) {
@@ -523,7 +494,6 @@ async function reviewRepository(repoRoot, options = {}) {
       }
     }
 
-    // Phase 4: Report Generation
     const report = generateReport(staticResults, llmResults, ruleResults, repo);
 
     return {

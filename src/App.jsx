@@ -670,7 +670,12 @@ useEffect(() => {
       const prDetails = prDetailsRes?.pr || prMeta || {};
       const md = composeReviewReport(prDetails, aiReview);
       const filename = `AQS_Review_PR_${prDetails?.number || 'report'}.pdf`;
-      const saved = await window.api.saveReportPdf({ defaultFilename: filename, content: md });
+      const saved = await window.api.saveReportPdf({
+        defaultFilename: filename,
+        content: md,
+        prDetails,
+        aiReview
+      });
       if (!saved?.ok) {
         if (saved?.error && saved.error !== 'cancelled') setError(saved.error || 'Failed to save PDF report');
         return;
@@ -797,40 +802,66 @@ useEffect(() => {
         <>
           {/* Top bar */}
           <div className="topbar">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width:36, height:36, borderRadius:8, background:'linear-gradient(135deg,#0ea5e9,#2563eb)', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontWeight:800 }}>AI</div>
+            <div className="topbar__left">
+              <div className="topbar__brand">
+                <div className="topbar__logo">AQ</div>
                 <div className="topbar__title">
                   <div className="brand">AQS Inspect</div>
-                  <div className="subtitle">PR Diff & AI Review</div>
+                  <div className="subtitle">AI Code Review</div>
                 </div>
               </div>
 
+              <div className="topbar__divider" />
+
               <div className="topbar__search">
-                <input placeholder="Search files, findings, or PRs…" value={topSearch} onChange={(e) => setTopSearch(e.target.value)} />
+                <span className="topbar__search-icon">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" strokeWidth="1.5"/>
+                    <path d="M10 10l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  </svg>
+                </span>
+                <input
+                  placeholder="Search files, findings…"
+                  value={topSearch}
+                  onChange={(e) => setTopSearch(e.target.value)}
+                  id="topbar-search"
+                />
               </div>
             </div>
 
             <div className="topbar__actions">
-              <button className="btn" onClick={focusDiff} title="Collapse panels to focus on diff">
-                ⤢ Focus Diff
+              <button className="btn-icon" onClick={focusDiff} title="Focus Diff (Ctrl+Enter)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+                  <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                </svg>
               </button>
-              <button className="btn" onClick={resetPanels} title="Restore panels">
-                ⤡ Restore
+              <button className="btn-icon" onClick={resetPanels} title="Restore Panels">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <polyline points="3 9 3 3 9 3"/><polyline points="21 15 21 21 15 21"/>
+                  <line x1="3" y1="3" x2="10" y2="10"/><line x1="21" y1="21" x2="14" y2="14"/>
+                </svg>
               </button>
 
-              {/* ✅ AI Review Popup Button */}
+              <div className="topbar__divider" />
+
               <button
-                className="btn success"
+                className="btn-icon"
+                style={aiReview?.findings?.length ? { color: '#818cf8' } : {}}
                 onClick={() => setShowAIReviewPopup(true)}
                 disabled={!aiReview?.findings?.length}
-                title="Open AI Review"
+                title={aiReview?.findings?.length ? `AI Review (${aiReview.findings.length} findings)` : 'Run a review first'}
               >
-                🧠 AI Review
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                </svg>
               </button>
 
-              <button className="btn" onClick={() => setShowSettings(true)}>
-                ⚙ Settings
+              <button className="btn-icon" onClick={() => setShowSettings(true)} title="Settings">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+                </svg>
               </button>
 
               <div className="topbar__avatar" title={config?.user || 'User'}>
@@ -841,32 +872,32 @@ useEffect(() => {
 
           {/* PR Controls */}
           <div className="panel">
-            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-              <select
-                className="input"
-                style={{ maxWidth: 180 }}
-                value={repoType}
-                onChange={(e) => {
-                  setRepoType(e.target.value);
-                  setSelectedPrId("");
-                  setPrList([]);
-                }}
-              >
-                <option value="github">GitHub</option>
-                <option value="azure">Azure DevOps</option>
-              </select>
+            {/* Row 1: Source selector + filters */}
+            <div className="panel__section">
+              <div className="segmented-control">
+                <button
+                  className={`segmented-control__btn ${repoType === 'github' ? 'active' : ''}`}
+                  onClick={() => { setRepoType('github'); setSelectedPrId(''); setPrList([]); }}
+                >
+                  GitHub
+                </button>
+                <button
+                  className={`segmented-control__btn ${repoType === 'azure' ? 'active' : ''}`}
+                  onClick={() => { setRepoType('azure'); setSelectedPrId(''); setPrList([]); }}
+                >
+                  Azure DevOps
+                </button>
+              </div>
 
               <select
                 className="input"
-                style={{ maxWidth: 140 }}
+                style={{ maxWidth: 150, flex: '0 0 auto' }}
                 value={filters.createdBy}
                 onChange={(e) => onSelectOwner(e.target.value)}
               >
                 <option value="">Filter by user</option>
                 {prOwners.map((owner) => (
-                  <option key={owner} value={owner}>
-                    {owner}
-                  </option>
+                  <option key={owner} value={owner}>{owner}</option>
                 ))}
               </select>
 
@@ -874,83 +905,77 @@ useEffect(() => {
                 className="input"
                 type="date"
                 value={filters.createdFrom}
-                onChange={async (e) => {
-                  const next = { ...filters, createdFrom: e.target.value };
-                  setFilters(next);
-                  await loadPRs(next);
-                }}
-                style={{ maxWidth: 140 }}
-                placeholder="From"
+                onChange={async (e) => { const next = { ...filters, createdFrom: e.target.value }; setFilters(next); await loadPRs(next); }}
                 title="Filter from date"
               />
               <input
                 className="input"
                 type="date"
                 value={filters.createdTo}
-                onChange={async (e) => {
-                  const next = { ...filters, createdTo: e.target.value };
-                  setFilters(next);
-                  await loadPRs(next);
-                }}
-                style={{ maxWidth: 140 }}
-                placeholder="To"
+                onChange={async (e) => { const next = { ...filters, createdTo: e.target.value }; setFilters(next); await loadPRs(next); }}
                 title="Filter to date"
               />
 
               <button className="btn primary" onClick={() => loadPRs()} disabled={prListLoading}>
-                {prListLoading ? "Loading PRs…" : "Load PRs"}
+                {prListLoading ? "Loading…" : "Load PRs"}
               </button>
             </div>
 
-            <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-              <select className="input" value={selectedPrId} onChange={(e) => onSelectPR(e.target.value)}>
-                <option value="">Select a PR…</option>
+            {/* Row 2: PR picker */}
+            <div className="panel__section">
+              <select
+                className="input"
+                value={selectedPrId}
+                onChange={(e) => onSelectPR(e.target.value)}
+                style={{ flex: 1 }}
+              >
+                <option value="">Select a pull request…</option>
                 {prList.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {`#${p.id} — ${String(p.title || "").slice(0, 90)}${
-                      String(p.title || "").length > 90 ? "…" : ""
-                    } (${p.status})`}
+                    {`#${p.id} — ${String(p.title || "").slice(0, 90)}${String(p.title || "").length > 90 ? "…" : ""} (${p.status})`}
                   </option>
                 ))}
               </select>
-
               <button
-                className="btn"
-                onClick={() => {
-                  setSelectedPrId("");
-                  setPrUrl("");
-                }}
+                className="btn ghost"
+                onClick={() => { setSelectedPrId(""); setPrUrl(""); }}
                 disabled={!selectedPrId && !prUrl}
-                title="Clear selection"
               >
                 Clear
               </button>
             </div>
 
-            <div className="row" style={{ marginTop: 12, gap: 8, flexWrap: "wrap" }}>
+            {/* Row 3: URL + CTA */}
+            <div className="panel__section">
               <input
-                className="input"
-                placeholder="PR URL (auto-filled from picker, editable)"
+                className="input input-url"
+                placeholder="PR URL (auto-filled from picker, or paste manually)"
                 value={prUrl}
                 onChange={(e) => setPrUrl(e.target.value)}
               />
-
-              <button className="btn primary" onClick={reviewPullRequest} disabled={loading || aiLoading}>
-                {loading || aiLoading ? "Reviewing…" : "Review Pull Request"}
+              <button className="btn cta" onClick={reviewPullRequest} disabled={loading || aiLoading} id="review-pr-btn">
+                {loading || aiLoading ? (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+                    Reviewing…
+                  </span>
+                ) : "Review Pull Request"}
               </button>
             </div>
 
             {error && (
-              <div className="error-container">
-                <div className="error">{error}</div>
+              <div className="error-container" style={{ marginTop: 10 }}>
+                <div className="error">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  {error}
+                </div>
                 {rateLimitRetry && (
-                  <button 
-                    className="btn primary" 
+                  <button
+                    className="btn primary"
                     onClick={rateLimitRetry}
                     disabled={aiLoading}
-                    style={{ marginTop: 8 }}
                   >
-                    {aiLoading ? "Retrying…" : "🔄 Retry"}
+                    {aiLoading ? "Retrying…" : "↺ Retry"}
                   </button>
                 )}
               </div>
@@ -960,61 +985,31 @@ useEffect(() => {
                 <div className="status">{statusMessage}</div>
               </div>
             )}
-
-            {/* Filter + Jump (kept) */}
-            {aiReview && (
-              <div className="toolbar">
-                <div className="chips">
-                  <button className={`chip ${activeFilter === "all" ? "active" : ""}`} onClick={() => setActiveFilter("all")}>
-                    All
-                  </button>
-                  <button
-                    className={`chip ${activeFilter === "critical" ? "active" : ""}`}
-                    onClick={() => setActiveFilter("critical")}
-                  >
-                    🔴 Critical
-                  </button>
-                  <button
-                    className={`chip ${activeFilter === "warning" ? "active" : ""}`}
-                    onClick={() => setActiveFilter("warning")}
-                  >
-                    🟡 Warning
-                  </button>
-                  <button className={`chip ${activeFilter === "info" ? "active" : ""}`} onClick={() => setActiveFilter("info")}>
-                    🟢 Info
-                  </button>
-                </div>
-
-                <div className="jump">
-                  <span className="muted">{anchorsRef.current.length ? `${issueIndex + 1}/${anchorsRef.current.length}` : "0/0"}</span>
-                  <button className="btn" onClick={goPrevIssue} disabled={!anchorsRef.current.length}>
-                    ⬆ Prev
-                  </button>
-                  <button className="btn" onClick={goNextIssue} disabled={!anchorsRef.current.length}>
-                    ⬇ Next
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
+
 
           {/* Main Layout */}
           <div className="workarea">
             {/* Sidebar */}
             <aside className={`sidebar ${navCollapsed ? "collapsed" : ""}`}>
               <div className="sidebar__header">
-                <div>
-                  <h2>Reviewed files</h2>
-                  <p>Browse files reviewed from the selected PR.</p>
+                <div className="sidebar__title-wrap">
+                  <div className="sidebar__title">Files</div>
+                  {files.length > 0 && !navCollapsed && (
+                    <div className="sidebar__subtitle">{files.length} file{files.length !== 1 ? 's' : ''} in PR</div>
+                  )}
                 </div>
                 <button
-                  className="btn"
+                  className="btn-icon"
                   onClick={() => setNavCollapsed((v) => !v)}
-                  title={navCollapsed ? "Maximize navigator" : "Minimize navigator"}
-                  aria-label={navCollapsed ? "Maximize navigator" : "Minimize navigator"}
-                  style={{ minWidth: 36, padding: "8px 10px" }}
+                  title={navCollapsed ? "Expand navigator" : "Collapse navigator"}
+                  aria-label={navCollapsed ? "Expand navigator" : "Collapse navigator"}
                 >
-                  {navCollapsed ? "+" : "−"}
+                  {navCollapsed ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+                  )}
                 </button>
               </div>
 
@@ -1028,47 +1023,56 @@ useEffect(() => {
                       onFileSelect={(file) => setSelectedFile(file)}
                     />
                   ) : (
-                    <div style={{ padding: 18 }} className="muted">
-                      Review a pull request to populate files here.
+                    <div style={{ padding: '28px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6e7681" strokeWidth="1.5" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      <div style={{ fontSize: 12, color: '#6e7681', textAlign: 'center', lineHeight: 1.5 }}>
+                        Review a pull request<br/>to see files here
+                      </div>
                     </div>
                   )}
                 </div>
               )}
             </aside>
 
-            {/* Diff + (optional) review pane remains but is now secondary since popup is primary */}
+            {/* Diff + review pane */}
             <main className="main" style={{ minHeight: 0 }}>
               <div className="diffpane" style={{ minHeight: 0 }}>
                 {selectedFile ? (
                   <DiffViewer
-					  file={selectedFile}
-					  findings={scopedFindings}
-					  onRequestFullFile={async (file, side) => {
-						// Hook for "View full latest source"
-						// If you wire backend IPC, call it here:
-						// return await window.api.getFileContent({ filename: file.filename, side, repoType, prUrl })
-						if (!window.api?.getFileContent) {
-						  throw new Error("Full file API not implemented yet (window.api.getFileContent)");
-						}
-						return await window.api.getFileContent({ filename: file.filename, side, repoType, prUrl, selectedPrId });
-					  }}
-					/>
+                    file={selectedFile}
+                    findings={scopedFindings}
+                    onRequestFullFile={async (file, side) => {
+                      if (!window.api?.getFileContent) {
+                        throw new Error("Full file API not implemented yet (window.api.getFileContent)");
+                      }
+                      return await window.api.getFileContent({ filename: file.filename, side, repoType, prUrl, selectedPrId });
+                    }}
+                  />
                 ) : (
-                  <div className="empty">Select a file to view diff</div>
+                  <div className="empty">
+                    <div className="empty__icon">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                    </div>
+                    <div className="empty__text">Select a file to view diff</div>
+                  </div>
                 )}
               </div>
 
-              {/* Keep existing right pane collapsible; can be used for summary or left empty */}
+              {/* Right AI pane */}
               <div className={`reviewpane ${reviewCollapsed ? "collapsed" : ""}`}>
                 <div className={`pane-title ${reviewCollapsed ? "is-collapsed" : ""}`}>
                   {!reviewCollapsed && <span>AI Review</span>}
                   <button
                     className="pane-toggle"
                     onClick={() => setReviewCollapsed((v) => !v)}
-                    title={reviewCollapsed ? "Maximize AI pane" : "Minimize AI pane"}
-                    aria-label={reviewCollapsed ? "Maximize AI pane" : "Minimize AI pane"}
+                    title={reviewCollapsed ? "Expand AI pane" : "Collapse AI pane"}
+                    aria-label={reviewCollapsed ? "Expand AI pane" : "Collapse AI pane"}
                   >
-                    {reviewCollapsed ? "+" : "−"}
+                    {reviewCollapsed ? (
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    ) : (
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    )}
                   </button>
                 </div>
 
@@ -1080,46 +1084,45 @@ useEffect(() => {
                           findings={aiReview.findings || []}
                           onFilterChange={(sev) => setActiveFilter(sev.toLowerCase())}
                         />
-
                         <ReviewWorkflowPanel data={aiReview} />
-
-                        <div className="reviewcard info" style={{ marginTop: 14 }}>
+                        <div className="reviewcard info" style={{ marginTop: 4 }}>
                           <div className="reviewcard__hdr">
                             <span className="sev">SUMMARY</span>
                             <span className="title">Findings</span>
                           </div>
                           <div className="reviewcard__body">
-                            Total findings: <b>{aiReview.findings.length}</b>
+                            Total findings: <strong style={{ color: 'var(--text-primary)' }}>{aiReview.findings.length}</strong>
                             <br />
-                            Scope: <b>{selectedFile ? baseName(selectedFile.filename) : "All files"}</b>
+                            Scope: <strong style={{ color: 'var(--text-primary)' }}>{selectedFile ? baseName(selectedFile.filename) : "All files"}</strong>
                           </div>
                         </div>
-
-                        <button
-                          className="btn success"
-                          style={{ marginTop: 12, width: "100%" }}
-                          onClick={() => setShowAIReviewPopup(true)}
-                        >
+                        <button className="btn cta" style={{ width: "100%" }} onClick={() => setShowAIReviewPopup(true)}>
                           Open Full AI Review
                         </button>
-
-                        <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-                          <button className="btn primary" onClick={sendReviewEmail}>
-                            📧 Compose Review Email
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <button className="btn" style={{ width: '100%', justifyContent: 'flex-start', gap: 10 }} onClick={sendReviewEmail}>
+                            📧 Send Review Email
                           </button>
-                          <button className="btn" onClick={exportReportPdf}>
-                            📄 Export Report
+                          <button className="btn" style={{ width: '100%', justifyContent: 'flex-start', gap: 10 }} onClick={exportReportPdf}>
+                            📄 Export PDF Report
                           </button>
-                          <button className="btn success" onClick={() => performPRAction("accept")}>
-                            ✅ Accept PR
+                          <button className="btn success" style={{ width: '100%', justifyContent: 'flex-start', gap: 10 }} onClick={() => performPRAction("accept")}>
+                            ✓ Accept PR
                           </button>
-                          <button className="btn danger" onClick={() => performPRAction(repoType === "azure" ? "abandon" : "reject")}>
-                            {repoType === "azure" ? "Abandon PR" : "Reject PR"}
+                          <button className="btn danger" style={{ width: '100%', justifyContent: 'flex-start', gap: 10 }} onClick={() => performPRAction(repoType === "azure" ? "abandon" : "reject")}>
+                            ✕ {repoType === "azure" ? "Abandon PR" : "Reject PR"}
                           </button>
                         </div>
                       </>
                     ) : (
-                      <div className="muted">No AI findings yet. Click “Review Pull Request”.</div>
+                      <div style={{ padding: '32px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6e7681" strokeWidth="1.5" strokeLinecap="round"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                        <div style={{ fontSize: 12, color: '#6e7681', textAlign: 'center', lineHeight: 1.6 }}>
+                          <span>No findings yet. Click </span>
+                          <strong style={{ color: '#818cf8' }}>Review Pull Request</strong>
+                          <span> to run AI analysis.</span>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
@@ -1127,7 +1130,7 @@ useEffect(() => {
             </main>
           </div>
 
-          {/* ✅ AI Review Popup */}
+          {/* AI Review Popup */}
           <AIReviewPopup
             open={showAIReviewPopup}
             onClose={() => setShowAIReviewPopup(false)}
@@ -1145,6 +1148,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 /* =========================================================
    AI Review Popup
@@ -1207,111 +1211,125 @@ function AIReviewPopup({ open, onClose, findings, selectedFile, files, aiReview,
   };
 
   return (
-    <div className="ai-overlay" role="dialog" aria-modal="true">
+    <div className="ai-overlay" role="dialog" aria-modal="true" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="ai-modal">
+        {/* Modal header */}
         <div className="ai-header">
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <div className="ai-title">AI Review</div>
-            <div className="muted" style={{ fontSize: 12 }}>
-              Scope: <b>{selectedFile ? baseName(selectedFile.filename) : "All files"}</b> • Findings:{" "}
-              <b>{safeFindings.length}</b>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div className="ai-title">
+              <div className="ai-title-icon">🧠</div>
+              AI Review
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: '#8b949e' }}>
+                {selectedFile ? baseName(selectedFile.filename) : 'All files'}
+              </span>
+              <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 999, background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.25)', color: '#818cf8', fontWeight: 700 }}>
+                {safeFindings.length} finding{safeFindings.length !== 1 ? 's' : ''}
+              </span>
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button className="btn" onClick={goPrev} disabled={!canNav}>
-              ⬆ Prev
-            </button>
-            <button className="btn" onClick={goNext} disabled={!canNav}>
-              ⬇ Next
-            </button>
-            <button className="btn" onClick={onClose}>
-              ✖ Close
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button className="btn" onClick={goPrev} disabled={!canNav}>↑ Prev</button>
+            <button className="btn" onClick={goNext} disabled={!canNav}>↓ Next</button>
+            <div className="topbar__divider" />
+            <button className="btn-icon" onClick={onClose} title="Close (Esc)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
         </div>
 
         <div className="ai-body">
+          {/* Left: file list */}
           <div className="ai-left">
             <div className="ai-section-title">Impacted Files</div>
             <div className="ai-filelist">
-              <button className={`ai-file ${selectedFile ? "" : "active"}`} onClick={() => onSelectFile?.(null)}>
+              <button className={`ai-file ${!selectedFile ? 'active' : ''}`} onClick={() => onSelectFile?.(null)}>
                 All files
+                <span style={{ float: 'right', fontSize: 11, opacity: 0.7 }}>{safeFindings.length}</span>
               </button>
 
-              {filesWithFindings.map((f) => (
-                <button
-                  key={f.filename}
-                  className={`ai-file ${selectedFile?.filename === f.filename ? "active" : ""}`}
-                  onClick={() => onSelectFile?.(f)}
-                  title={f.filename}
-                >
-                  {baseName(f.filename)}
-                </button>
-              ))}
+              {filesWithFindings.map((f) => {
+                const fileCount = safeFindings.filter(fn => fn.filename === f.filename || fn.filename?.endsWith(baseName(f.filename))).length;
+                return (
+                  <button
+                    key={f.filename}
+                    className={`ai-file ${selectedFile?.filename === f.filename ? 'active' : ''}`}
+                    onClick={() => onSelectFile?.(f)}
+                    title={f.filename}
+                  >
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{baseName(f.filename)}</span>
+                    <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 6, flexShrink: 0 }}>{fileCount}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
+          {/* Right: findings list */}
           <div className="ai-right">
             <div className="ai-section-title">Findings</div>
 
-            {!safeFindings.length && <div className="muted">No findings for this scope.</div>}
+            {!safeFindings.length && (
+              <div style={{ padding: '32px 0', textAlign: 'center' }}>
+                <div style={{ fontSize: 28, marginBottom: 12, opacity: 0.3 }}>✓</div>
+                <div className="muted">No findings for this scope.</div>
+              </div>
+            )}
 
             {safeFindings.map((f, idx) => {
-              const sev = String(f.severity || "info").toLowerCase();
+              const sev = String(f.severity || 'info').toLowerCase();
+              const isActive = idx === localIndex;
               return (
                 <div
                   key={`${makeFindingKey(f)}-${idx}`}
                   className={`reviewcard ${sev}`}
                   style={{
-                    cursor: "pointer",
-                    outline: idx === localIndex ? "2px solid rgba(37,99,235,.5)" : "none",
+                    cursor: 'pointer',
+                    outline: isActive ? '2px solid rgba(99,102,241,0.55)' : 'none',
+                    transform: isActive ? 'translateY(-1px)' : 'none',
+                    boxShadow: isActive ? '0 4px 16px rgba(99,102,241,0.15)' : undefined,
+                    transition: 'all 0.15s ease',
                   }}
-                  onClick={() => {
-                    setLocalIndex(idx);
-                    onSelectFinding?.(f);
-                  }}
+                  onClick={() => { setLocalIndex(idx); onSelectFinding?.(f); }}
                 >
                   <div className="reviewcard__hdr">
-                    <span className="sev">{String(f.severity || "info").toUpperCase()}</span>
-                    <span className="title">{f.title || "Finding"}</span>
+                    <span className="sev">{String(f.severity || 'info').toUpperCase()}</span>
+                    <span className="title">{f.title || 'Finding'}</span>
+                    {isActive && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#818cf8', flexShrink: 0 }}>↵ active</span>}
                   </div>
-                  <div className="reviewcard__body">{f.explanation || ""}</div>
+                  <div className="reviewcard__body">{f.explanation || ''}</div>
+                  {f.recommendation && (
+                    <div style={{ marginTop: 8, fontSize: 12, padding: '6px 10px', borderRadius: 6, background: 'rgba(99,102,241,0.08)', borderLeft: '2px solid rgba(99,102,241,0.4)', color: '#a5b4fc' }}>
+                      💡 {f.recommendation}
+                    </div>
+                  )}
                   <div className="reviewcard__meta">
-                    File: <b>{baseName(f.filename || "(not specified)")}</b>
-                    {f.matchText ? (
-                      <>
-                        {" "}
-                        • Match:{" "}
-                        <span className="muted">
-                          {String(f.matchText).slice(0, 60)}
-                          {String(f.matchText).length > 60 ? "…" : ""}
-                        </span>
-                      </>
-                    ) : null}
+                    📄 {baseName(f.filename || '(not specified)')}
+                    {f.matchText && (
+                      <> &bull; <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10 }}>{String(f.matchText).slice(0, 55)}{String(f.matchText).length > 55 ? '…' : ''}</span></>
+                    )}
                   </div>
                 </div>
               );
             })}
 
-              {/* Per-file reasoning (from AI review) */}
-              {selectedFile && (
-                <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.03)" }}>
-                  <div style={{ fontWeight: 700, marginBottom: 6 }}>File Reasoning</div>
-                  {fileReasoningText ? (
-                    <div style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{fileReasoningText}</div>
-                  ) : (
-                    <div className="muted">No file-specific reasoning available for this file.</div>
-                  )}
-                </div>
-              )}
+            {selectedFile && (
+              <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.7px', color: '#6e7681', marginBottom: 10 }}>File Reasoning</div>
+                {fileReasoningText ? (
+                  <div style={{ fontSize: 12.5, lineHeight: 1.6, color: '#8b949e', whiteSpace: 'pre-wrap' }}>{fileReasoningText}</div>
+                ) : (
+                  <div className="muted">No reasoning available for this file.</div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         <div className="ai-footer">
-          <div className="muted" style={{ fontSize: 12 }}>
-            Tip: Click a finding to jump to the code + inline highlight.
-          </div>
+          <span className="muted">Click a finding to jump to its location in the diff</span>
         </div>
       </div>
     </div>
@@ -1324,19 +1342,20 @@ function ReviewProgressDialog({ progress }) {
   return (
     <div className="progress-overlay" aria-live="polite" role="status">
       <div className="progress-modal">
-        <div style={{ fontSize: 18, fontWeight: 800 }}>Review in progress</div>
-        <div style={{ marginTop: 10, color: "#475569" }}>
-          Reviewing <strong>{progress.current}</strong> of <strong>{progress.total}</strong> files
+        <div className="progress-modal__icon">🧠</div>
+        <div className="progress-modal__title">Analyzing Code</div>
+        <div className="progress-modal__subtitle">
+          Reviewing file <strong style={{ color: '#e6edf3' }}>{progress.current}</strong> of{' '}
+          <strong style={{ color: '#e6edf3' }}>{progress.total}</strong>
         </div>
-        <div style={{ marginTop: 18 }} className="progress-bar">
-          <div className="progress-fill" style={{ width: `${percentage}%` }} />
+        <div className="progress-bar">
+          <div className="progress-fill" style={{ width: `${Math.max(4, percentage)}%` }} />
         </div>
-        <div style={{ marginTop: 10, color: "#475569" }}>{percentage}% complete</div>
-        <div style={{ marginTop: 14, opacity: 0.8, fontSize: 13 }}>
-          The current file under review is: {progress.file || "Preparing..."}
-        </div>
+        <div className="progress-modal__pct">{percentage}%</div>
+        <div className="progress-modal__file">{progress.file || 'Preparing…'}</div>
       </div>
     </div>
+
   );
 }
 

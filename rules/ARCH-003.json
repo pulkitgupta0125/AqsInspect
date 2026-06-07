@@ -1,0 +1,13 @@
+{
+  "id": "ARCH-003",
+  "category": "all",
+  "severity": "Major",
+  "title": "Override preferred over Overtake for UI",
+  "description": "Overtake patterns are risky for upgrades. Preference is always to override existing components in Aurena/Marble.",
+  "recommendation": "Refactor overtake to a layered override or custom event if possible.",
+  "pattern": "overtake|override_",
+  "alertOnMissing": false,
+  "approved": true,
+  "source": "builtin",
+  "classification": "IFS_AQS"
+}

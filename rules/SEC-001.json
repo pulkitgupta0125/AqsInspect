@@ -1,0 +1,13 @@
+{
+  "id": "SEC-001",
+  "category": "plsql",
+  "severity": "Blocker",
+  "title": "Dynamic SQL must be approved",
+  "description": "EXECUTE IMMEDIATE and DBMS_SQL can expose the system to SQL injection. All dynamic SQL must be explicitly approved.",
+  "recommendation": "Use static SQL if possible, or ensure arguments are properly bound and sanitized.",
+  "pattern": "\\b(execute\\s+immediate|dbms_sql\\.execute)\\b",
+  "alertOnMissing": false,
+  "approved": true,
+  "source": "builtin",
+  "classification": "IFS_AQS"
+}

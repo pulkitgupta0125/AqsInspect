@@ -1,0 +1,38 @@
+[
+  {
+    "path": "C:\\Users\\pulkit.gupta\\.gemini\\antigravity\\brain\\6b99b887-6a46-4bac-8da5-38c9d728e04f\\scratch\\mock_core\\core\\ACCRUL\\source\\ACCRUL\\database\\VoucherRow.apy",
+    "type": "apy",
+    "layer": "Core",
+    "component": "ACCRUL",
+    "logical_unit": "VoucherRow",
+    "version": "Apps10",
+    "size_bytes": 295
+  },
+  {
+    "path": "C:\\Users\\pulkit.gupta\\.gemini\\antigravity\\brain\\6b99b887-6a46-4bac-8da5-38c9d728e04f\\scratch\\mock_core\\core\\ACCRUL\\source\\ACCRUL\\database\\VoucherRow.plsql",
+    "type": "plsql",
+    "layer": "Core",
+    "component": "ACCRUL",
+    "logical_unit": "VoucherRow",
+    "version": "Apps10",
+    "size_bytes": 220
+  },
+  {
+    "path": "C:\\Users\\pulkit.gupta\\.gemini\\antigravity\\brain\\6b99b887-6a46-4bac-8da5-38c9d728e04f\\scratch\\mock_core\\core\\ORDER\\source\\ORDER\\database\\OrderCheck.plsql",
+    "type": "plsql",
+    "layer": "Core",
+    "component": "ORDER",
+    "logical_unit": "OrderCheck",
+    "version": "Apps10",
+    "size_bytes": 320
+  },
+  {
+    "path": "C:\\Users\\pulkit.gupta\\.gemini\\antigravity\\brain\\6b99b887-6a46-4bac-8da5-38c9d728e04f\\scratch\\mock_core\\core\\ORDER\\source\\ORDER\\database\\OrderView.views",
+    "type": "views",
+    "layer": "Core",
+    "component": "ORDER",
+    "logical_unit": "OrderView",
+    "version": "Apps10",
+    "size_bytes": 213
+  }
+]

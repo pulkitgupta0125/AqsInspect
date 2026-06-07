@@ -2,12 +2,60 @@ import React, { useMemo, useState } from "react";
 
 const getPath = (f) => f?.filename || f?.fileName || f?.path || "";
 
-function pickAIIcon(stats) {
-  if (!stats) return "";
-  if ((stats.critical || 0) > 0) return "🔴";
-  if ((stats.warning || 0) > 0) return "🟡";
-  if ((stats.info || 0) > 0) return "🟢";
-  return "";
+/* File extension → color-coded icon */
+function FileIcon({ name = "" }) {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  const map = {
+    js: { color: "#f7df1e", label: "JS" },
+    jsx: { color: "#61dafb", label: "JSX" },
+    ts: { color: "#3178c6", label: "TS" },
+    tsx: { color: "#3178c6", label: "TSX" },
+    css: { color: "#38bdf8", label: "CSS" },
+    scss: { color: "#cc6699", label: "SCSS" },
+    less: { color: "#1d365d", label: "LESS" },
+    html: { color: "#f97316", label: "HTML" },
+    xml: { color: "#f97316", label: "XML" },
+    json: { color: "#fbbf24", label: "JSON" },
+    sql: { color: "#818cf8", label: "SQL" },
+    py: { color: "#3b82f6", label: "PY" },
+    cs: { color: "#9b59b6", label: "C#" },
+    java: { color: "#f89820", label: "JV" },
+    go: { color: "#00acd7", label: "GO" },
+    rb: { color: "#cc342d", label: "RB" },
+    rs: { color: "#ee4b2b", label: "RS" },
+    md: { color: "#64748b", label: "MD" },
+    yaml: { color: "#6db33f", label: "YML" },
+    yml: { color: "#6db33f", label: "YML" },
+    sh: { color: "#22c55e", label: "SH" },
+    bat: { color: "#22c55e", label: "BAT" },
+    toml: { color: "#9ca3af", label: "TM" },
+    env: { color: "#22c55e", label: "ENV" },
+    txt: { color: "#6e7681", label: "TXT" },
+  };
+  const info = map[ext] ?? { color: "#6e7681", label: ext.slice(0, 2).toUpperCase() || "?" };
+  return (
+    <span style={{
+      width: 17, height: 17, borderRadius: 3,
+      background: `${info.color}22`,
+      border: `1px solid ${info.color}44`,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: 7, fontWeight: 800, color: info.color,
+      flexShrink: 0, letterSpacing: 0, lineHeight: 1,
+    }}>
+      {info.label}
+    </span>
+  );
+}
+
+function SeverityDot({ stats }) {
+  if (!stats) return null;
+  if ((stats.critical || 0) > 0)
+    return <span className="sev-dot critical" title={`${stats.critical} blocker(s)`} />;
+  if ((stats.warning || 0) > 0)
+    return <span className="sev-dot warning" title={`${stats.warning} major issue(s)`} />;
+  if ((stats.info || 0) > 0)
+    return <span className="sev-dot info" title={`${stats.info} minor issue(s)`} />;
+  return null;
 }
 
 function badgeClass(stats) {
@@ -22,7 +70,7 @@ export default function FileTree({
   nodes = [],
   onFileSelect,
   selectedFile,
-  statsByFile = {}, // filename -> {critical, warning, info, total, additions, deletions}
+  statsByFile = {},
 }) {
   return (
     <div className="az-tree">
@@ -42,8 +90,6 @@ export default function FileTree({
 
 function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
   const [open, setOpen] = useState(true);
-
-  // indentation uses inline style only for left padding (everything else via CSS classes)
   const pad = 10 + level * 14;
 
   const selectedPath = getPath(selectedFile);
@@ -52,21 +98,15 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
 
   const fileStats = node?.type === "file" ? statsByFile[nodePath] : null;
 
-  // Folder rollup stats (AI + additions/deletions)
   const folderAgg = useMemo(() => {
     if (node?.type !== "folder") return null;
-    // keep folder aggregation minimal: only counts of severities
     let critical = 0, warning = 0, info = 0;
     const walk = (x) => {
       if (!x) return;
       if (x.type === "file") {
         const p = getPath(x.fileData);
         const s = statsByFile[p];
-        if (s) {
-          critical += s.critical || 0;
-          warning += s.warning || 0;
-          info += s.info || 0;
-        }
+        if (s) { critical += s.critical || 0; warning += s.warning || 0; info += s.info || 0; }
         return;
       }
       (x.children || []).forEach(walk);
@@ -75,16 +115,8 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
     return { critical, warning, info };
   }, [node, statsByFile]);
 
-  // =========================
-  // Folder node (Azure-like)
-  // =========================
+  // Folder node
   if (node?.type === "folder") {
-    const icon = pickAIIcon(folderAgg);
-    const changeBadge =
-      folderAgg && (folderAgg.additions || folderAgg.deletions)
-        ? `+${folderAgg.additions || 0} / -${folderAgg.deletions || 0}`
-        : "";
-
     return (
       <div>
         <div
@@ -93,16 +125,31 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
           style={{ paddingLeft: pad }}
           title={node.name}
         >
-          <span className="az-tree-caret">{open ? "▾" : "▸"}</span>
-          <span className="az-tree-icon" aria-hidden>{open ? (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 7c0-1.1.9-2 2-2h3l2 2h7a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" fill="#f59e0b"/></svg>
-          ) : (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 7c0-1.1.9-2 2-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" fill="#f59e0b"/></svg>
-          )}</span>
+          <span className="az-tree-caret">
+            {open ? (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M2 3l3 4 3-4z"/></svg>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M3 2l4 3-4 3z"/></svg>
+            )}
+          </span>
+
+          <span className="az-tree-icon" aria-hidden>
+            {open ? (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                <path d="M3 7c0-1.1.9-2 2-2h4l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" fill="#f59e0b" fillOpacity="0.9"/>
+              </svg>
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                <path d="M3 7c0-1.1.9-2 2-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" fill="#f59e0b" fillOpacity="0.6"/>
+              </svg>
+            )}
+          </span>
 
           <span className="az-tree-name">{node.name}</span>
 
-          {/* Do not show severity badges for folders (only files should show severity) */}
+          {folderAgg && (folderAgg.critical > 0 || folderAgg.warning > 0 || folderAgg.info > 0) && (
+            <SeverityDot stats={folderAgg} />
+          )}
         </div>
 
         {open && node.children?.length > 0 && (
@@ -123,12 +170,7 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
     );
   }
 
-  // =========================
-  // File node (Azure-like)
-  // =========================
-  const aiIcon = pickAIIcon(fileStats);
-  const changeBadge = "";
-
+  // File node
   return (
     <div
       className={`az-tree-row az-tree-file ${isSelected ? "active" : ""}`}
@@ -137,12 +179,12 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
       title={nodePath}
     >
       <span className="az-tree-icon" aria-hidden>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#2563eb"/></svg>
+        <FileIcon name={node.name || ""} />
       </span>
 
       <span className="az-tree-name">{node.name}</span>
 
-      {aiIcon ? <span className="az-tree-badge">{aiIcon}</span> : null}
+      <SeverityDot stats={fileStats} />
     </div>
   );
 }

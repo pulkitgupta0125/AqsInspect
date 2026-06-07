@@ -37,6 +37,12 @@ contextBridge.exposeInMainWorld('api', {
   verifyLLMConfig: (llm) =>
     ipcRenderer.invoke('llm:verify', llm),
 
+  listOpenAIModels: (payload) =>
+    ipcRenderer.invoke('llm:listOpenAIModels', payload),
+
+  listOllamaModels: (payload) =>
+    ipcRenderer.invoke('llm:listOllamaModels', payload),
+
   /* =============================
      MCP / ERP INTEGRATION
   ============================= */
@@ -69,7 +75,11 @@ contextBridge.exposeInMainWorld('api', {
      RULES & USER
   ============================= */
   listRules: () => ipcRenderer.invoke('rules:list'),
-  updateRules: (payload) => ipcRenderer.invoke('rules:update', payload),
+  updateRule: (payload) => ipcRenderer.invoke('rules:update', payload),
+  approveRule: (payload) => ipcRenderer.invoke('rules:approve', payload),
+  approveAllRules: () => ipcRenderer.invoke('rules:approveAll'),
+  disapproveAllRules: () => ipcRenderer.invoke('rules:disapproveAll'),
+  buildRulesFromCore: (payload) => ipcRenderer.invoke('rules:buildFromCore', payload),
   getUserEmail: (payload) => ipcRenderer.invoke('user:getEmail', payload),
   verifyMCP: () => ipcRenderer.invoke('mcp:verify'),
 

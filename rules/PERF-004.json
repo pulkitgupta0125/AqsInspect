@@ -1,0 +1,13 @@
+{
+  "id": "PERF-004",
+  "category": "plsql",
+  "severity": "Major",
+  "title": "Use bulk operations for large datasets",
+  "description": "Database DML operations inside loops cause row-by-row processing overhead (Row-By-Agonizing-Row). Use bulk operations (BULK COLLECT, FORALL).",
+  "recommendation": "Refactor code to use FORALL or BULK COLLECT instead of row-by-row loops.",
+  "pattern": "for\\s+.*\\sin\\s+.*\\n[\\s\\S]{0,120}?\\b(insert|update|delete)\\b",
+  "alertOnMissing": false,
+  "approved": true,
+  "source": "builtin",
+  "classification": "ORACLE"
+}

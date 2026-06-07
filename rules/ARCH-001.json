@@ -1,0 +1,13 @@
+{
+  "id": "ARCH-001",
+  "category": "all",
+  "severity": "Blocker",
+  "title": "Core layer file modified in customer solution",
+  "description": "Core layer files must not be modified in the customer repository. Use Cust/Extension layer.",
+  "recommendation": "Move customization to Cust/Extension layer using event actions, custom objects, or projection extensions. Remove core file from customer repository.",
+  "pattern": "",
+  "alertOnMissing": false,
+  "approved": true,
+  "source": "builtin",
+  "classification": "IFS_AQS"
+}

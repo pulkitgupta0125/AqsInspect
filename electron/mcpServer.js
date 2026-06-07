@@ -22,6 +22,76 @@ function getStatus() {
   };
 }
 
+/**
+ * Validates PR projections and entities against the connected IFS ERP (Read-Only)
+ */
+async function validatePRAgainstERP(prDetails, ifsConfig) {
+  const erpFindings = [];
+  if (!ifsConfig || (!ifsConfig.odataUrl && !ifsConfig.metadataUrl)) {
+    return erpFindings;
+  }
+
+  try {
+    // 1. Fetch metadata in a completely read-only request
+    const metadata = await ifsOData.fetchMetadata(ifsConfig);
+    const metadataStr = String(metadata?.data || "");
+
+    const files = prDetails?.files || [];
+    for (const f of files) {
+      const filename = String(f.filename || "").toLowerCase();
+      
+      // Parse projection files (e.g. DemoCustomer.projection -> DemoCustomer)
+      if (filename.endsWith(".projection")) {
+        const baseName = path.basename(filename, ".projection");
+        const cleanProjName = baseName.replace(/handling$/i, ""); // Common IFS naming
+
+        // Check if metadata contains the projection reference
+        const existsInMetadata = metadataStr.includes(baseName) || metadataStr.includes(cleanProjName);
+        
+        if (!existsInMetadata) {
+          erpFindings.push({
+            severity: "Warning",
+            confidence: 0.85,
+            title: "Projection not found in target ERP",
+            explanation: `The projection '${baseName}' was not found in the connected IFS ERP metadata. If this is a new custom projection, ensure it is deployed first.`,
+            ruleId: "ERP_VAL_PROJECTION_MISSING",
+            recommendation: "Ensure this projection exists or is included in the deployment package before merging.",
+            lineRange: null,
+            matchText: f.filename,
+            classification: "IFS_ERP"
+          });
+        }
+      }
+
+      // Check for C# form files (IEE Forms) - Warnings for IFS Cloud target
+      if (filename.endsWith(".cs") && (filename.includes("designer.cs") || contentHasFormsHooks(f.patch))) {
+        erpFindings.push({
+          severity: "Major",
+          confidence: 0.9,
+          title: "Legacy C# Form committed",
+          explanation: `File '${f.filename}' contains C# code. C# Forms are deprecated in IFS Cloud and only supported in Apps10 & lower.`,
+          ruleId: "ERP_VAL_LEGACY_FORM",
+          recommendation: "If target is IFS Cloud, rewrite this customization as an Aurena projection (.projection) and client (.client).",
+          lineRange: null,
+          matchText: f.filename,
+          classification: "IFS_ERP"
+        });
+      }
+    }
+  } catch (err) {
+    // Graceful fallback if ERP is unreachable
+    console.warn("Could not query live ERP for PR validation:", err.message);
+  }
+
+  return erpFindings;
+}
+
+function contentHasFormsHooks(patch) {
+  if (!patch) return false;
+  const upper = patch.toUpperCase();
+  return upper.includes("APF") || upper.includes("FNDATTRIBUTE") || upper.includes("WINDOW");
+}
+
 async function analyzePullRequestImpact({ prUrlOrId, repoType, repoSettings, ifsConfig, mcpConfig = {} }) {
   if (!prUrlOrId) {
     throw new Error("PR URL or ID is required for impact analysis.");
@@ -38,6 +108,11 @@ async function analyzePullRequestImpact({ prUrlOrId, repoType, repoSettings, ifs
   }
 
   const impactAnalysis = ruleEngine.validatePRImpact(prDetails, ifsMetadata);
+  
+  // Expose live validation against connection settings
+  const erpFindings = await validatePRAgainstERP(prDetails, ifsConfig);
+  impactAnalysis.findings.push(...erpFindings);
+
   const auditEvent = audit.recordAuditEvent("pr-impact-analysis", {
     prUrlOrId,
     repoType,
@@ -97,5 +172,6 @@ module.exports = {
   analyzePullRequestImpact,
   fetchIFSMetadata,
   verifyOAuth2,
-  verifyIFSConnection
+  verifyIFSConnection,
+  validatePRAgainstERP
 };

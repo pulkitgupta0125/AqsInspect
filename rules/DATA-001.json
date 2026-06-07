@@ -1,0 +1,13 @@
+{
+  "id": "DATA-001",
+  "category": "all",
+  "severity": "Major",
+  "title": "NULL comparisons must use IS NULL/IS NOT NULL",
+  "description": "Using standard comparison operators (= or !=) with NULL is invalid in SQL/PLSQL and always evaluates to NULL.",
+  "recommendation": "Change '= NULL' to 'IS NULL' and '!= NULL' to 'IS NOT NULL'.",
+  "pattern": "(=|!=|<>)\\s*null\\b",
+  "alertOnMissing": false,
+  "approved": true,
+  "source": "builtin",
+  "classification": "ORACLE"
+}

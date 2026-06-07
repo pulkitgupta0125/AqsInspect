@@ -130,8 +130,15 @@ function getLLMConfigSafe() {
 }
 
 function validateLLM(llm) {
-  if (!llm?.apiKey) return "API key is missing";
   const provider = (llm.provider || "azure").toLowerCase();
+
+  if (provider === "ollama") {
+    if (!llm.endpoint) return "Ollama endpoint is missing";
+    if (!llm.model) return "Ollama model is missing";
+    return null;
+  }
+
+  if (!llm?.apiKey) return "API key is missing";
 
   if (provider === "azure") {
     if (!llm.endpoint) return "Azure endpoint is missing";
@@ -139,7 +146,7 @@ function validateLLM(llm) {
   } else if (provider === "openai") {
     if (!llm.model) return "OpenAI model is missing";
   } else {
-    return "Unknown provider. Use 'azure' or 'openai'.";
+    return "Unknown provider. Use 'azure', 'openai', or 'ollama'.";
   }
   return null;
 }
@@ -452,7 +459,7 @@ ipcMain.handle('report:save', async (_evt, payload) => {
 });
 
 ipcMain.handle('report:savePdf', async (_evt, payload) => {
-  const { defaultFilename, content } = payload || {};
+  const { defaultFilename, content, prDetails, aiReview } = payload || {};
   try {
     const res = await dialog.showSaveDialog({
       defaultPath: defaultFilename ? defaultFilename.replace(/\.[^/.]+$/, "") + '.pdf' : 'review-report.pdf',
@@ -465,59 +472,459 @@ ipcMain.handle('report:savePdf', async (_evt, payload) => {
     if (res.canceled) return { ok: false, error: 'cancelled' };
     const filePath = res.filePath;
 
-    // Minimal markdown -> HTML conversion (sufficient for report formatting)
-    const md = String(content || '');
-    const escapeHtml = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let fullHtml = "";
 
-    let html = md
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    if (prDetails && aiReview) {
+      // Build structured enterprise report HTML
+      const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      
+      const findings = Array.isArray(aiReview.findings) ? aiReview.findings : [];
+      let blockerCount = 0;
+      let majorCount = 0;
+      let minorCount = 0;
+      let infoCount = 0;
 
-    // Code fences -> pre
-    html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${escapeHtml(code)}</code></pre>`);
-    // Headings
-    html = html.replace(/^###### (.*$)/gim, '<h6>$1</h6>');
-    html = html.replace(/^##### (.*$)/gim, '<h5>$1</h5>');
-    html = html.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
-    html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-    html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-    html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-    // Bold/italic
-    html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
-    html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
-    // Lists
-    html = html.replace(/^- (.*$)/gim, '<li>$1</li>');
-    html = html.replace(/(<li>[\s\S]*?<\/li>)(?!(<li>))/gim, '<ul>$1</ul>');
-    // Links
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2">$1</a>');
-    // Paragraphs
-    html = html
-      .split(/\n\n+/)
-      .map((p) => {
-        if (/^<h\d>/.test(p) || /^<pre>/.test(p) || /^<ul>/.test(p)) return p;
-        return `<p>${p.replace(/\n/g, '<br/>')}</p>`;
-      })
-      .join('\n');
+      findings.forEach(f => {
+        const sev = String(f.severity || "info").toLowerCase();
+        if (sev === "blocker" || sev === "critical") blockerCount++;
+        else if (sev === "major" || sev === "warning") majorCount++;
+        else if (sev === "minor") minorCount++;
+        else infoCount++;
+      });
 
-    const fullHtml = `<!doctype html>
+      const groupedFindings = {};
+      findings.forEach(f => {
+        const fn = f.filename || "General Rules";
+        if (!groupedFindings[fn]) groupedFindings[fn] = [];
+        groupedFindings[fn].push(f);
+      });
+
+      const developer = prDetails.createdBy || prDetails.created_by || prDetails.created_by_login || prDetails.author || "Unknown Developer";
+      const createdAt = prDetails.createdAt || prDetails.created_at || prDetails.created || "N/A";
+      const score = aiReview.score !== undefined ? aiReview.score : (aiReview.summary?.score !== undefined ? aiReview.summary.score : "N/A");
+      const scoreNum = Number(score);
+      
+      let scoreClass = "med";
+      let scoreLabel = "Neutral";
+      if (!isNaN(scoreNum)) {
+        if (scoreNum >= 80) {
+          scoreClass = "high";
+          scoreLabel = "Good";
+        } else if (scoreNum >= 50) {
+          scoreClass = "med";
+          scoreLabel = "Warning";
+        } else {
+          scoreClass = "low";
+          scoreLabel = "Action Req.";
+        }
+      }
+
+      // Generate HTML list of findings grouped by file
+      let findingsHtml = "";
+      Object.keys(groupedFindings).forEach(filename => {
+        findingsHtml += `
+          <div class="file-group">
+            <div class="file-header">${esc(filename)}</div>
+        `;
+        
+        groupedFindings[filename].forEach(f => {
+          const sev = String(f.severity || "info").toLowerCase();
+          const badgeClass = (sev === "blocker" || sev === "critical") ? "blocker" :
+                             (sev === "major" || sev === "warning") ? "major" :
+                             (sev === "minor") ? "minor" : "info";
+
+          findingsHtml += `
+            <div class="finding-card ${badgeClass}">
+              <div class="finding-header">
+                <span class="badge ${badgeClass}">${esc(f.severity || "info")}</span>
+                <span class="finding-title">${esc(f.title || "Finding")}</span>
+              </div>
+              <div class="finding-body">${esc(f.explanation || "")}</div>
+          `;
+
+          if (f.matchText) {
+            findingsHtml += `
+              <div class="metadata-label" style="font-size:9px; margin-top:6px;">Matched Code Snippet</div>
+              <pre class="code-block"><code>${esc(f.matchText)}</code></pre>
+            `;
+          }
+
+          if (f.recommendation) {
+            findingsHtml += `
+              <div class="recommendation-box">
+                <strong>💡 Suggestion:</strong> ${esc(f.recommendation)}
+              </div>
+            `;
+          }
+
+          findingsHtml += `</div>`; // Close finding-card
+        });
+
+        findingsHtml += `</div>`; // Close file-group
+      });
+
+      fullHtml = `<!doctype html>
       <html>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin: 24px; color: #111; }
-          pre { background:#f6f8fa; padding:12px; border-radius:6px; overflow:auto }
-          code { font-family: monospace; }
-          h1,h2,h3 { color: #0b69ff }
-          ul { margin-left: 18px }
-          table { border-collapse: collapse }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #1f2937;
+            margin: 30px;
+            line-height: 1.5;
+            background: #ffffff;
+          }
+          .header-banner {
+            background: #0f172a;
+            color: #ffffff;
+            padding: 20px 24px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          }
+          .header-logo {
+            font-size: 20px;
+            font-weight: 800;
+            color: #6366f1;
+            letter-spacing: -0.5px;
+          }
+          .header-title-section {
+            text-align: right;
+          }
+          .report-title {
+            font-size: 16px;
+            font-weight: 700;
+            margin: 0;
+            color: #ffffff;
+          }
+          .report-subtitle {
+            font-size: 10px;
+            color: #94a3b8;
+            margin: 3px 0 0 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          .card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+          }
+          .grid {
+            display: flex;
+            gap: 24px;
+          }
+          .grid-left {
+            flex: 3;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px 24px;
+          }
+          .grid-right {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+          }
+          .metadata-item {
+            display: flex;
+            flex-direction: column;
+          }
+          .metadata-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          .metadata-value {
+            font-size: 13px;
+            font-weight: 500;
+            color: #111827;
+            margin-top: 2px;
+            word-break: break-all;
+          }
+          .score-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 12px 24px;
+            min-width: 100px;
+          }
+          .score-circle {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            font-weight: 800;
+            color: #ffffff;
+            margin-bottom: 4px;
+            box-shadow: 0 3px 8px rgba(99,102,241,0.25);
+          }
+          .score-circle.high { background: #10b981; }
+          .score-circle.med { background: #f59e0b; }
+          .score-circle.low { background: #ef4444; }
+          
+          .score-label {
+            font-size: 10px;
+            font-weight: 700;
+            color: #374151;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+          }
+          .severity-pills {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+          }
+          .pill {
+            flex: 1;
+            text-align: center;
+            padding: 8px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 12px;
+          }
+          .pill.blocker { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+          .pill.major { background: #ffedd5; color: #9a3412; border: 1px solid #fed7aa; }
+          .pill.minor { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+          .pill.info { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
+          
+          .section-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 12px;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          .summary-text {
+            font-size: 13px;
+            color: #4b5563;
+            line-height: 1.6;
+          }
+          .file-group {
+            margin-bottom: 20px;
+            page-break-inside: avoid;
+          }
+          .file-header {
+            font-size: 12.5px;
+            font-weight: 700;
+            background: #f1f5f9;
+            color: #334155;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-family: 'JetBrains Mono', Consolas, monospace;
+            margin-bottom: 10px;
+            border: 1px solid #e2e8f0;
+            word-break: break-all;
+          }
+          .finding-card {
+            border: 1px solid #e5e7eb;
+            border-left-width: 4px;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+            background: #ffffff;
+            page-break-inside: avoid;
+          }
+          .finding-card.blocker { border-left-color: #ef4444; }
+          .finding-card.major { border-left-color: #f59e0b; }
+          .finding-card.minor { border-left-color: #3b82f6; }
+          .finding-card.info { border-left-color: #6b7280; }
+          
+          .finding-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+          }
+          .badge {
+            font-size: 9px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+          }
+          .badge.blocker { background: #ef4444; color: #ffffff; }
+          .badge.major { background: #f59e0b; color: #ffffff; }
+          .badge.minor { background: #3b82f6; color: #ffffff; }
+          .badge.info { background: #6b7280; color: #ffffff; }
+          
+          .finding-title {
+            font-weight: 700;
+            font-size: 13px;
+            color: #111827;
+          }
+          .finding-body {
+            font-size: 12.5px;
+            color: #4b5563;
+            line-height: 1.5;
+          }
+          .code-block {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 11px;
+            overflow-x: auto;
+            margin: 6px 0;
+            white-space: pre;
+            color: #0f172a;
+          }
+          .recommendation-box {
+            background: #f0fdf4;
+            border-left: 3px solid #22c55e;
+            padding: 6px 12px;
+            border-radius: 0 4px 4px 0;
+            font-size: 12px;
+            color: #15803d;
+            margin-top: 6px;
+          }
+          .footer {
+            text-align: center;
+            font-size: 10px;
+            color: #9ca3af;
+            margin-top: 32px;
+            border-top: 1px solid #e5e7eb;
+            padding-top: 12px;
+          }
         </style>
       </head>
       <body>
-        ${html}
+        <div class="header-banner">
+          <div class="header-logo">🛡️ AQS Inspect</div>
+          <div class="header-title-section">
+            <h1 class="report-title">Pull Request Review Report</h1>
+            <p class="report-subtitle">Enterprise Code Quality Analysis</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="grid">
+            <div class="grid-left">
+              <div class="metadata-item">
+                <span class="metadata-label">Pull Request</span>
+                <span class="metadata-value">#${esc(prDetails.number || prDetails.id || "N/A")}</span>
+              </div>
+              <div class="metadata-item">
+                <span class="metadata-label">Title</span>
+                <span class="metadata-value">${esc(prDetails.title || "N/A")}</span>
+              </div>
+              <div class="metadata-item">
+                <span class="metadata-label">Developer</span>
+                <span class="metadata-value">${esc(developer)}</span>
+              </div>
+              <div class="metadata-item">
+                <span class="metadata-label">Created At</span>
+                <span class="metadata-value">${esc(createdAt)}</span>
+              </div>
+              <div class="metadata-item" style="grid-column: span 2;">
+                <span class="metadata-label">PR Link</span>
+                <span class="metadata-value" style="font-size:11px;"><a href="${esc(prDetails.html_url || prDetails.url || "")}">${esc(prDetails.html_url || prDetails.url || "View PR")}</a></span>
+              </div>
+            </div>
+            <div class="grid-right">
+              <div class="score-container">
+                <div class="score-circle ${scoreClass}">${score}</div>
+                <span class="score-label">${scoreLabel}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="severity-pills">
+          <div class="pill blocker">🚨 Blocker: ${blockerCount}</div>
+          <div class="pill major">⚠️ Major: ${majorCount}</div>
+          <div class="pill minor">ℹ️ Minor: ${minorCount}</div>
+          <div class="pill info">📋 Info: ${infoCount}</div>
+        </div>
+
+        <div class="card">
+          <div class="section-title">Executive Summary</div>
+          <div class="summary-text">${esc(aiReview.summary || "No summary available.")}</div>
+        </div>
+
+        <div class="section-title">Detailed Analysis Findings</div>
+        ${findingsHtml || '<div class="summary-text" style="color: #22c55e;">✅ No quality warnings or blockers detected during code scan.</div>'}
+
+        <div class="footer">
+          Report generated by AQS Inspect Engine on ${new Date().toLocaleString()} • Confidential Enterprise Copy
+        </div>
       </body>
       </html>`;
+    } else {
+      // Minimal markdown -> HTML conversion (sufficient for report formatting)
+      const md = String(content || '');
+      const escapeHtml = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      let html = md
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+      // Code fences -> pre
+      html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${escapeHtml(code)}</code></pre>`);
+      // Headings
+      html = html.replace(/^###### (.*$)/gim, '<h6>$1</h6>');
+      html = html.replace(/^##### (.*$)/gim, '<h5>$1</h5>');
+      html = html.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
+      html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+      html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+      html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+      // Bold/italic
+      html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
+      html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
+      // Lists
+      html = html.replace(/^- (.*$)/gim, '<li>$1</li>');
+      html = html.replace(/(<li>[\s\S]*?<\/li>)(?!(<li>))/gim, '<ul>$1</ul>');
+      // Links
+      html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2">$1</a>');
+      // Paragraphs
+      html = html
+        .split(/\n\n+/)
+        .map((p) => {
+          if (/^<h\d>/.test(p) || /^<pre>/.test(p) || /^<ul>/.test(p)) return p;
+          return `<p>${p.replace(/\n/g, '<br/>')}</p>`;
+        })
+        .join('\n');
+
+      fullHtml = `<!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin: 24px; color: #111; }
+            pre { background:#f6f8fa; padding:12px; border-radius:6px; overflow:auto }
+            code { font-family: monospace; }
+            h1,h2,h3 { color: #0b69ff }
+            ul { margin-left: 18px }
+            table { border-collapse: collapse }
+          </style>
+        </head>
+        <body>
+          ${html}
+        </body>
+        </html>`;
+    }
 
     const bw = new BrowserWindow({ width: 900, height: 1100, show: false, webPreferences: { offscreen: true } });
     await bw.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
@@ -1060,6 +1467,25 @@ ipcMain.handle("llm:verify", async (_evt, llmFromUi) => {
   const temperature = typeof llm.temperature === "number" ? llm.temperature : 0.2;
 
   try {
+    if (provider === "ollama") {
+      const endpoint = String(llm.endpoint).replace(/\/$/, "");
+      const res = await axios.post(
+        `${endpoint}/api/chat`,
+        {
+          model: llm.model,
+          messages: [{ role: "user", content: "test" }],
+          stream: false
+        },
+        {
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+      if (res.status >= 200 && res.status < 300) return { valid: true };
+      return { valid: false, error: `Unexpected status ${res.status}` };
+    }
+
     if (provider === "openai") {
       const res = await axios.post(
         "https://api.openai.com/v1/chat/completions",
@@ -1107,92 +1533,168 @@ ipcMain.handle("llm:verify", async (_evt, llmFromUi) => {
   }
 });
 
+ipcMain.handle("llm:listOpenAIModels", async (_evt, payload) => {
+  const { apiKey } = payload || {};
+  if (!apiKey) {
+    return { ok: false, error: "API Key is missing" };
+  }
+  try {
+    const res = await axios.get("https://api.openai.com/v1/models", {
+      headers: {
+        Authorization: `Bearer ${apiKey}`
+      }
+    });
+    if (res.status >= 200 && res.status < 300) {
+      const models = (res.data?.data || [])
+        .map(m => m.id)
+        .filter(id => id.startsWith("gpt-"))
+        .sort();
+      return { ok: true, models };
+    }
+    return { ok: false, error: `Unexpected status code: ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: e.response?.data?.error?.message || e.message };
+  }
+});
+
+ipcMain.handle("llm:listOllamaModels", async (_evt, payload) => {
+  const { endpoint } = payload || {};
+  if (!endpoint) {
+    return { ok: false, error: "Ollama endpoint is missing" };
+  }
+  try {
+    const cleanEndpoint = String(endpoint).replace(/\/$/, "");
+    const res = await axios.get(`${cleanEndpoint}/api/tags`);
+    if (res.status >= 200 && res.status < 300) {
+      const models = (res.data?.models || [])
+        .map(m => m.name)
+        .sort();
+      return { ok: true, models };
+    }
+    return { ok: false, error: `Unexpected status code: ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 // -----------------------------
-// IPC: Full AI Review Pipeline (Azure/OpenAI)
+// IPC: Full AI Review Pipeline (Azure/OpenAI) using Multi-Agent Digital Workers
 // -----------------------------
 ipcMain.handle("review:run", async (_evt, payload) => {
   const llm = getLLMConfigSafe();
   const err = validateLLM(llm);
   if (err) throw new Error(err);
 
-  const provider = (llm.provider || "azure").toLowerCase();
-  const temperature = typeof llm.temperature === "number" ? llm.temperature : 0.2;
+  const files = payload?.files || [];
+  const rawDiff = payload?.unifiedDiff || "";
+  
+  // Scrub any sensitive credentials from input before sending to LLM
+  const { redactSecrets } = require("./reviewEngine/agents");
+  const unifiedDiff = redactSecrets(rawDiff);
 
-  const unifiedDiff = payload?.unifiedDiff || "";
-  if (!unifiedDiff) throw new Error("No diff provided for AI review.");
+  if (!unifiedDiff && !files.length) {
+    throw new Error("No diff or files provided for AI review.");
+  }
 
-  // Improved system + user prompts for higher-quality, file-scoped reasoning
-  const system = `You are an expert senior software engineer and AQS reviewer with deep knowledge of SQL/Oracle, IFS Applications and integration patterns. Always reason about security, performance, and maintainability. Where applicable, reference IFS documentation patterns and database best practices. Output MUST be JSON only.`;
+  const postFunc = async (url, body, headers) => {
+    return await postWithRetry(url, body, headers, 3, 750);
+  };
 
-  const user = `
-Return JSON ONLY with this schema:
-{
-  "score": number (0-100),
-  "severity": "LOW" | "MEDIUM" | "HIGH",
-  "confidence": number (0-1),
-  "findings": [
-    { "title": string, "explanation": string, "filename": string, "matchText": string, "line": number }
-  ],
-  "fileReasoning": { "<filename>": "detailed reasoning text for the file" }
-}
+  const consolidatedFindings = [];
 
-Provide per-file reasoning in 'fileReasoning' keyed by filename. For each finding, include the most-specific 'matchText' and an optional 'line' number if available. Use docs.ifs.com as primary guidance for IFS-specific recommendations when applicable. Analyze DIFF context below and synthesize findings per-file.
+  // If per-file review is requested, run each file through the Multi-Agent Delegator
+  if (files.length > 0) {
+    for (const f of files) {
+      if (!f.filename) continue;
+      
+      const fileClassifier = require("./reviewEngine/fileClassifier");
+      const ext = path.extname(f.filename);
+      const cat = fileClassifier.classifyFile(f.filename, f.filename).category;
 
-DIFF:
-${unifiedDiff}
-`;
+      const mockFile = {
+        path: f.filename,
+        fullPath: f.filename,
+        extension: ext,
+        category: cat,
+        size: f.patch ? f.patch.length : 100
+      };
 
-  const messages = [
-    { role: "system", content: system },
-    { role: "user", content: user }
-  ];
+      const agentResult = await require("./reviewEngine/agents").delegateReview(
+        mockFile,
+        f.patch || "",
+        llm,
+        postFunc
+      );
 
-  let url;
-  let headers;
-  let body;
-
-  if (provider === "openai") {
-    url = "https://api.openai.com/v1/chat/completions";
-    headers = {
-      Authorization: `Bearer ${llm.apiKey}`,
-      "Content-Type": "application/json"
-    };
-    body = { model: llm.model, messages, temperature };
+      consolidatedFindings.push(...(agentResult.findings || []).map(finding => ({
+        ...finding,
+        filename: f.filename
+      })));
+    }
   } else {
-    const endpoint = String(llm.endpoint).replace(/\/$/, "");
-    const apiVersion = llm.apiVersion || "2024-02-15-preview";
-    url = `${endpoint}/openai/deployments/${llm.model}/chat/completions?api-version=${apiVersion}`;
-    headers = {
-      "api-key": llm.apiKey,
-      "Content-Type": "application/json"
+    // Fallback: run on unified diff as a generic file
+    const mockFile = {
+      path: "PR_DIFF.diff",
+      fullPath: "PR_DIFF.diff",
+      extension: ".diff",
+      category: "generic",
+      size: unifiedDiff.length
     };
-    body = { messages, temperature };
+
+    const agentResult = await require("./reviewEngine/agents").delegateReview(
+      mockFile,
+      unifiedDiff,
+      llm,
+      postFunc
+    );
+
+    consolidatedFindings.push(...(agentResult.findings || []));
   }
 
-  const res = await postWithRetry(url, body, headers, 3, 750);
-
-  const content = res?.data?.choices?.[0]?.message?.content || "";
-  const parsed = extractJson(content);
-
-  if (!parsed) {
-    // graceful fallback, never crash UI
-    return {
-      score: 0,
-      severity: "MEDIUM",
-      confidence: 0.2,
-      findings: [
-        {
-          title: "LLM returned non-JSON output",
-          explanation: "The model response could not be parsed as JSON. Please retry with a smaller diff or different model.",
-          filename: "",
-          matchText: ""
-        }
-      ],
-      raw: content
-    };
+  // Live OData ERP connected validation if configured (read-only)
+  const cfg = store && typeof store.getConfig === "function" ? store.getConfig() : {};
+  if (cfg?.ifs && (cfg.ifs.odataUrl || cfg.ifs.metadataUrl)) {
+    try {
+      const erpFindings = await mcpServer.validatePRAgainstERP({ files }, cfg.ifs);
+      if (erpFindings && erpFindings.length > 0) {
+        consolidatedFindings.push(...erpFindings);
+      }
+    } catch (err) {
+      console.warn("ERP connected validation during review failed:", err.message);
+    }
   }
 
-  return parsed;
+  // Enforce 3-tier sorting: IFS_AQS -> ORACLE -> IFS_ERP
+  const classificationOrder = { "IFS_AQS": 1, "ORACLE": 2, "IFS_ERP": 3 };
+  consolidatedFindings.forEach(f => {
+    if (!f.classification || !classificationOrder[f.classification]) {
+      f.classification = "IFS_ERP";
+    }
+  });
+
+  consolidatedFindings.sort((a, b) => {
+    const valA = classificationOrder[a.classification] || 99;
+    const valB = classificationOrder[b.classification] || 99;
+    return valA - valB;
+  });
+
+  // Calculate score based on findings severity
+  let high = 0, medium = 0, low = 0;
+  consolidatedFindings.forEach(f => {
+    const sev = String(f.severity || "info").toLowerCase();
+    if (sev === "blocker" || sev === "critical" || sev === "high") high++;
+    else if (sev === "major" || sev === "warning" || sev === "medium") medium++;
+    else low++;
+  });
+  const score = Math.max(0, 100 - (high * 40 + medium * 15 + low * 5));
+
+  return {
+    score,
+    severity: high > 0 ? "HIGH" : medium > 0 ? "MEDIUM" : "LOW",
+    confidence: 0.9,
+    findings: consolidatedFindings,
+    fileReasoning: {}
+  };
 });
 
 // -----------------------------
@@ -1210,38 +1712,29 @@ ipcMain.handle("fix:generate", async (_evt, payload) => {
   const matchText = payload?.matchText || "";
   const title = payload?.title || "";
   const explanation = payload?.explanation || "";
-  const filePatch = payload?.filePatch || "";       // the selected file's patch (preferred)
-  const unifiedDiff = payload?.unifiedDiff || "";   // fallback context if needed
+  const filePatch = payload?.filePatch || "";       
+  const unifiedDiff = payload?.unifiedDiff || "";   
 
   if (!filename) throw new Error("filename is required");
   if (!filePatch && !unifiedDiff) throw new Error("No diff context provided");
 
   const system =
-    "You are an expert IFS AQS code reviewer and fixer. Output MUST be JSON only. " +
-    "Do not include markdown fences. Provide minimal, safe changes.";
+    "Role: IFS AQS Auto-fix agent. Provide clean code change. Output JSON only. No markdown.";
 
-  const user = `
-Return JSON ONLY in this schema:
-{
-  "suggestedFix": string,
-  "fixPatch": string,          // unified diff patch for the SAME file; may be empty if not possible safely
-  "confidence": number (0-1),
-  "notes": string              // any caveats or prerequisites
-}
-
-Context:
-- File: ${filename}
-- Finding title: ${title}
-- Finding explanation: ${explanation}
-- Match text (if any): ${matchText}
-
-Diff context (prefer filePatch):
+  const user = `Fix finding in: ${filename}
+Title: ${title}
+Explanation: ${explanation}
+Match text: ${matchText}
+Diff context:
 ${filePatch || unifiedDiff}
 
-Rules:
-- Keep changes minimal and scoped.
-- If you cannot safely generate a patch, return fixPatch as "" but still provide suggestedFix.
-- Patch MUST be unified diff for this exact file path if provided.
+Return JSON Schema:
+{
+  "suggestedFix": "Corrected code snippet only",
+  "fixPatch": "Unified diff patch for this file (optional)",
+  "confidence": 0.9,
+  "notes": "explanation of fix"
+}
 `;
 
   const messages = [
@@ -1254,6 +1747,11 @@ Rules:
     url = "https://api.openai.com/v1/chat/completions";
     headers = { Authorization: `Bearer ${llm.apiKey}`, "Content-Type": "application/json" };
     body = { model: llm.model, messages, temperature };
+  } else if (provider === "ollama") {
+    const endpoint = String(llm.endpoint).replace(/\/$/, "");
+    url = `${endpoint}/api/chat`;
+    headers = { "Content-Type": "application/json" };
+    body = { model: llm.model, messages, stream: false, options: { temperature } };
   } else {
     const endpoint = String(llm.endpoint).replace(/\/$/, "");
     const apiVersion = llm.apiVersion || "2024-02-15-preview";
@@ -1263,12 +1761,12 @@ Rules:
   }
 
   const res = await axios.post(url, body, { headers });
-  const content = res?.data?.choices?.[0]?.message?.content || "";
+  const content = provider === "ollama" ? (res?.data?.message?.content || "") : (res?.data?.choices?.[0]?.message?.content || "");
   const parsed = extractJson(content);
 
   if (!parsed) {
     return {
-      suggestedFix: "Unable to generate a structured fix. Try again or reduce diff size.",
+      suggestedFix: "Unable to generate a structured fix. Try again.",
       fixPatch: "",
       confidence: 0.2,
       notes: "LLM returned non-JSON output",
@@ -1276,7 +1774,6 @@ Rules:
     };
   }
 
-  // ensure keys exist
   return {
     suggestedFix: String(parsed.suggestedFix || ""),
     fixPatch: String(parsed.fixPatch || ""),
@@ -1528,28 +2025,8 @@ ipcMain.handle("file:getContent", async (_evt, payload) => {
 // ===========================
 ipcMain.handle('rules:list', async (_evt) => {
   try {
-    const ruleEngine = require('./reviewEngine/ruleEngine');
-    const { buildDynamicRulesFromIfsCore } = require('./reviewEngine/dynamicRuleBuilder');
-    const cfg = store.getConfig ? store.getConfig() : {};
-    
-    const DEFAULT_RULES = ruleEngine.DEFAULT_RULES || [];
-    console.log(`📋 Loaded DEFAULT_RULES: ${DEFAULT_RULES.length} rules`);
-    
-    let dynamicRules = [];
-    if (cfg?.ifs?.corePath) {
-      console.log(`📍 IFS Core path configured: ${cfg.ifs.corePath}`);
-      try {
-        dynamicRules = await buildDynamicRulesFromIfsCore(cfg.ifs.corePath) || [];
-        console.log(`✅ Built dynamic rules: ${dynamicRules.length} rules`);
-      } catch (e) {
-        console.warn('⚠️ Failed to load dynamic rules:', e?.message || e);
-      }
-    } else {
-      console.log('⚠️ No IFS Core path configured');
-    }
-
-    const allRules = [...DEFAULT_RULES, ...dynamicRules];
-    console.log(`✅ Total rules available: ${allRules.length}`);
+    const rulesStore = require('./reviewEngine/rulesStore');
+    const allRules = rulesStore.loadAllRules();
     return { ok: true, rules: allRules, total: allRules.length };
   } catch (e) {
     console.error('rules:list failed:', e?.message || e);
@@ -1558,15 +2035,60 @@ ipcMain.handle('rules:list', async (_evt) => {
 });
 
 ipcMain.handle('rules:update', async (_evt, payload) => {
-  const { rules } = payload || {};
+  const { rule } = payload || {};
   try {
-    const cfg = readConfigFile();
-    cfg.customRules = rules || [];
-    writeConfigFile(cfg);
+    const rulesStore = require('./reviewEngine/rulesStore');
+    rulesStore.saveRule(rule);
     return { ok: true };
   } catch (e) {
     console.error('rules:update failed:', e?.message || e);
-    return { ok: false, error: e?.message || 'Failed to update rules' };
+    return { ok: false, error: e?.message || 'Failed to update rule' };
+  }
+});
+
+ipcMain.handle('rules:approve', async (_evt, payload) => {
+  const { ruleId, approvedStatus } = payload || {};
+  try {
+    const rulesStore = require('./reviewEngine/rulesStore');
+    rulesStore.setRuleApproval(ruleId, approvedStatus);
+    return { ok: true };
+  } catch (e) {
+    console.error('rules:approve failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to change approval' };
+  }
+});
+
+ipcMain.handle('rules:approveAll', async (_evt) => {
+  try {
+    const rulesStore = require('./reviewEngine/rulesStore');
+    rulesStore.approveAllRules();
+    return { ok: true };
+  } catch (e) {
+    console.error('rules:approveAll failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to approve all rules' };
+  }
+});
+
+ipcMain.handle('rules:disapproveAll', async (_evt) => {
+  try {
+    const rulesStore = require('./reviewEngine/rulesStore');
+    rulesStore.disapproveAllRules();
+    return { ok: true };
+  } catch (e) {
+    console.error('rules:disapproveAll failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to disapprove all rules' };
+  }
+});
+
+ipcMain.handle('rules:buildFromCore', async (_evt, payload) => {
+  const { corePath } = payload || {};
+  try {
+    const dynamicRuleBuilder = require('./reviewEngine/dynamicRuleBuilder');
+    const generated = dynamicRuleBuilder.buildDynamicRulesFromIfsCore(corePath);
+    return { ok: true, count: generated.length, rules: generated };
+  } catch (e) {
+    console.error('rules:buildFromCore failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to scan core path and build rules' };
   }
 });
 

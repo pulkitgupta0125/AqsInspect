@@ -1,0 +1,13 @@
+{
+  "id": "SEC-003",
+  "category": "all",
+  "severity": "Major",
+  "title": "No IFSAPP prefix on DB calls",
+  "description": "Hardcoding the schema prefix 'IFSAPP' is a security violation and restricts database portability.",
+  "recommendation": "Remove the 'ifsapp.' prefix; rely on schema search paths and synonym references.",
+  "pattern": "\\bifsapp\\.",
+  "alertOnMissing": false,
+  "approved": true,
+  "source": "builtin",
+  "classification": "IFS_AQS"
+}

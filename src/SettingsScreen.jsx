@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 export default function SettingsScreen({ onBack }) {
   /* =============================
      STATE
-  ============================= */
+     ============================= */
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("repo");
 
@@ -14,22 +14,44 @@ export default function SettingsScreen({ onBack }) {
 
   // LLM settings
   const [provider, setProvider] = useState("azure");
-  const [llm, setLLM] = useState({
+  const [azureLlm, setAzureLlm] = useState({
     endpoint: "",
+    apiKey: "",
+    model: "gpt-4o-mini",
+    temperature: 0.2,
+    apiVersion: "2024-02-15-preview"
+  });
+  const [openaiLlm, setOpenaiLlm] = useState({
     apiKey: "",
     model: "gpt-4o-mini",
     temperature: 0.2
   });
+  const [ollamaLlm, setOllamaLlm] = useState({
+    endpoint: "http://localhost:11434",
+    model: "llama3",
+    temperature: 0.2
+  });
+
+  const [openaiModels, setOpenaiModels] = useState(["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]);
+  const [ollamaModels, setOllamaModels] = useState(["llama3", "mistral", "codellama", "phi3"]);
+  const [detectingOpenai, setDetectingOpenai] = useState(false);
+  const [detectingOllama, setDetectingOllama] = useState(false);
+  const [showOpenaiCustom, setShowOpenaiCustom] = useState(false);
+  const [showOllamaCustom, setShowOllamaCustom] = useState(false);
 
   const [ifs, setIfs] = useState({
     metadataUrl: "",
     odataUrl: "",
     restUrl: "",
-    tenantId: ""
+    tenantId: "",
+    clientId: "",
+    clientSecret: "",
+    accessToken: ""
   });
 
-  // optional local IFS core path for rule generation
+  // Local IFS core + customer paths for rule generation & validation
   const [ifsCorePath, setIfsCorePath] = useState("");
+  const [ifsCustomerPath, setIfsCustomerPath] = useState("");
 
   const [oauth2, setOAuth2] = useState({
     authUrl: "",
@@ -72,14 +94,19 @@ export default function SettingsScreen({ onBack }) {
   const [tokenResult, setTokenResult] = useState(null);
   const [rules, setRules] = useState([]);
   const [rulesLoading, setRulesLoading] = useState(false);
+  const [editingRuleId, setEditingRuleId] = useState(null);
+  const [editFormData, setEditFormData] = useState({});
   const [userEmail, setUserEmail] = useState('');
   const [userEmailStatus, setUserEmailStatus] = useState(null);
-  // const [mcpStatus, setMcpStatus] = useState(null);
   const [mcpLoading, setMcpLoading] = useState(false);
+  const [mcpVerifyStatus, setMcpVerifyStatus] = useState(null);
+  const [testPrUrl, setTestPrUrl] = useState("");
+  const [testLoading, setTestLoading] = useState(false);
+  const [testResults, setTestResults] = useState(null);
 
   /* =============================
      LOAD CONFIG
-  ============================= */
+     ============================= */
   useEffect(() => {
     (async () => {
       try {
@@ -104,8 +131,43 @@ export default function SettingsScreen({ onBack }) {
         });
 
         if (cfg?.llm) {
-          setLLM(cfg.llm);
-          setProvider(cfg.llm.provider || "azure");
+          const rootLlm = cfg.llm || {};
+          const activeProv = rootLlm.provider || "azure";
+          const providers = rootLlm.providers || {};
+
+          // Azure config
+          const azureData = {
+            endpoint: providers.azure?.endpoint || (activeProv === "azure" ? rootLlm.endpoint : "") || "",
+            apiKey: providers.azure?.apiKey || (activeProv === "azure" ? rootLlm.apiKey : "") || "",
+            model: providers.azure?.model || (activeProv === "azure" ? rootLlm.model : "gpt-4o-mini") || "gpt-4o-mini",
+            temperature: providers.azure?.temperature ?? (activeProv === "azure" ? rootLlm.temperature : 0.2) ?? 0.2,
+            apiVersion: providers.azure?.apiVersion || (activeProv === "azure" ? rootLlm.apiVersion : "2024-02-15-preview") || "2024-02-15-preview"
+          };
+          setAzureLlm(azureData);
+
+          // OpenAI config
+          const openaiData = {
+            apiKey: providers.openai?.apiKey || (activeProv === "openai" ? rootLlm.apiKey : "") || "",
+            model: providers.openai?.model || (activeProv === "openai" ? rootLlm.model : "gpt-4o-mini") || "gpt-4o-mini",
+            temperature: providers.openai?.temperature ?? (activeProv === "openai" ? rootLlm.temperature : 0.2) ?? 0.2
+          };
+          setOpenaiLlm(openaiData);
+          if (openaiData.model && !["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"].includes(openaiData.model)) {
+            setOpenaiModels(prev => [...prev.filter(m => m !== openaiData.model), openaiData.model]);
+          }
+
+          // Ollama config
+          const ollamaData = {
+            endpoint: providers.ollama?.endpoint || (activeProv === "ollama" ? rootLlm.endpoint : "http://localhost:11434") || "http://localhost:11434",
+            model: providers.ollama?.model || (activeProv === "ollama" ? rootLlm.model : "llama3") || "llama3",
+            temperature: providers.ollama?.temperature ?? (activeProv === "ollama" ? rootLlm.temperature : 0.2) ?? 0.2
+          };
+          setOllamaLlm(ollamaData);
+          if (ollamaData.model && !["llama3", "mistral", "codellama", "phi3"].includes(ollamaData.model)) {
+            setOllamaModels(prev => [...prev.filter(m => m !== ollamaData.model), ollamaData.model]);
+          }
+
+          setProvider(activeProv);
         }
 
         setIfs({
@@ -119,6 +181,7 @@ export default function SettingsScreen({ onBack }) {
         });
 
         setIfsCorePath(cfg?.ifs?.corePath || cfg?.ifsCorePath || "");
+        setIfsCustomerPath(cfg?.ifs?.customerPath || cfg?.ifsCustomerPath || "");
 
         setOAuth2({
           authUrl: cfg?.oauth2?.authUrl || "",
@@ -157,67 +220,134 @@ export default function SettingsScreen({ onBack }) {
     })();
   }, []);
 
+  useEffect(() => {
+    if (activeTab === "rules") {
+      loadRules();
+    }
+  }, [activeTab]);
+
   /* =============================
-     VERIFY GITHUB TOKEN
-  ============================= */
+     VERIFY GITHUB/AZURE TOKEN
+     ============================= */
   const verifyToken = async () => {
-    setRepoStatus("Checking...");
+    setRepoStatus("Checking repository connection...");
     try {
       const result = await window.api.verifyGitHubToken(github.token);
       if (result.valid) {
-        setRepoStatus(`✅ Valid (User: ${result.username})`);
+        setRepoStatus(`✅ Valid Token (User: ${result.username})`);
       } else {
-        setRepoStatus(`❌ ${result.error}`);
+        setRepoStatus(`❌ Verification failed: ${result.error}`);
       }
     } catch (err) {
-      setRepoStatus("❌ Verification failed");
+      setRepoStatus("❌ Connection request failed");
     }
   };
 
   /* =============================
      VERIFY LLM CONFIG
-  ============================= */
+     ============================= */
+  const detectOpenaiModels = async () => {
+    if (!openaiLlm.apiKey) {
+      setLlmStatus("❌ API Key is required to detect OpenAI models.");
+      return;
+    }
+    setDetectingOpenai(true);
+    setLlmStatus("Detecting OpenAI models...");
+    try {
+      const res = await window.api.listOpenAIModels({ apiKey: openaiLlm.apiKey });
+      if (res.ok) {
+        setOpenaiModels(res.models);
+        if (res.models.length > 0) {
+          setOpenaiLlm(prev => ({ ...prev, model: res.models[0] }));
+        }
+        setLlmStatus("✅ OpenAI models detected successfully.");
+      } else {
+        setLlmStatus(`❌ Failed to detect OpenAI models: ${res.error}`);
+      }
+    } catch (err) {
+      setLlmStatus(`❌ Error detecting OpenAI models: ${err.message}`);
+    } finally {
+      setDetectingOpenai(false);
+    }
+  };
+
+  const detectOllamaModels = async () => {
+    if (!ollamaLlm.endpoint) {
+      setLlmStatus("❌ Ollama endpoint is required to detect models.");
+      return;
+    }
+    setDetectingOllama(true);
+    setLlmStatus("Detecting Ollama models...");
+    try {
+      const res = await window.api.listOllamaModels({ endpoint: ollamaLlm.endpoint });
+      if (res.ok) {
+        setOllamaModels(res.models);
+        if (res.models.length > 0) {
+          setOllamaLlm(prev => ({ ...prev, model: res.models[0] }));
+        }
+        setLlmStatus("✅ Ollama models detected successfully.");
+      } else {
+        setLlmStatus(`❌ Failed to detect Ollama models: ${res.error}`);
+      }
+    } catch (err) {
+      setLlmStatus(`❌ Error detecting Ollama models: ${err.message}`);
+    } finally {
+      setDetectingOllama(false);
+    }
+  };
+
   const verifyLLM = async () => {
-    if (!llm?.apiKey) {
+    const activeLlm = 
+      provider === "azure" ? azureLlm :
+      provider === "openai" ? openaiLlm :
+      ollamaLlm;
+
+    if (provider !== "ollama" && !activeLlm.apiKey) {
       setLlmStatus("❌ API key is missing");
       return;
     }
 
-    if (provider === "azure" && !llm.endpoint) {
-      setLlmStatus("❌ Azure endpoint required");
+    if ((provider === "azure" || provider === "ollama") && !activeLlm.endpoint) {
+      setLlmStatus(`❌ ${provider === "azure" ? "Azure" : "Ollama"} endpoint required`);
       return;
     }
 
-    setLlmStatus("Checking...");
+    setLlmStatus("Testing LLM Connection...");
 
     try {
-      const result = await window.api.verifyLLMConfig({ ...llm, provider });
+      const result = await window.api.verifyLLMConfig({ ...activeLlm, provider });
       if (result.valid) {
-        setLlmStatus("✅ LLM connection successful");
+        setLlmStatus("✅ LLM Connection Successful");
       } else {
-        setLlmStatus(`❌ ${result.error}`);
+        setLlmStatus(`❌ Error: ${result.error}`);
       }
     } catch (err) {
-      setLlmStatus("❌ Verification failed");
+      setLlmStatus("❌ LLM Connection failed");
     }
   };
 
+  /* =============================
+     VERIFY EMAIL CONFIG
+     ============================= */
   const verifyEmailSettings = async () => {
-    setEmailStatus("Checking...");
+    setEmailStatus("Verifying SMTP configuration...");
     try {
       const result = await window.api.testSMTP({ ...email });
       if (result.ok) {
         setEmailStatus("✅ SMTP connection successful");
       } else {
-        setEmailStatus(`❌ ${result.error}`);
+        setEmailStatus(`❌ Connection failed: ${result.error}`);
       }
     } catch (err) {
-      setEmailStatus("❌ Verification failed");
+      setEmailStatus("❌ SMTP request failed");
     }
   };
 
+  /* =============================
+     VERIFY IFS CONNECTION
+     ============================= */
   const verifyIFSConnection = async () => {
-    setIfsStatus("Checking...");
+    setIfsStatus("Verifying IFS connection...");
     setIfsDebug(null);
     try {
       let currentOAuth2 = { ...oauth2 };
@@ -238,7 +368,7 @@ export default function SettingsScreen({ onBack }) {
           });
 
           if (!tokenResult?.ok) {
-            setIfsStatus(`❌ ${tokenResult?.error || "Unable to request OAuth2 token"}`);
+            setIfsStatus(`❌ OAuth Token Request Failed: ${tokenResult?.error || "Unknown Error"}`);
             return;
           }
 
@@ -259,28 +389,31 @@ export default function SettingsScreen({ onBack }) {
         setIfsStatus(`✅ Connected: ${result.meta.status} ${result.meta.contentType || ""}`);
         setIfsDebug(null);
       } else {
-        setIfsStatus(`❌ ${result.error}`);
+        setIfsStatus(`❌ Failed to connect: ${result.error}`);
         if (result.debug) {
           setIfsDebug(result.debug);
         }
       }
     } catch (err) {
-      setIfsStatus("❌ Verification failed");
+      setIfsStatus("❌ IFS Connection request failed");
       setIfsDebug(null);
     }
   };
 
+  /* =============================
+     VERIFY OAUTH
+     ============================= */
   const verifyOAuth = async () => {
-    setOAuthStatus("Checking...");
+    setOAuthStatus("Verifying OAuth2 details...");
     try {
       const result = await window.api.verifyOAuth2Config(oauth2);
       if (result.ok) {
         setOAuthStatus("✅ OAuth2 configuration is valid");
       } else {
-        setOAuthStatus(`❌ ${result.result?.error || result.error}`);
+        setOAuthStatus(`❌ Verification failed: ${result.result?.error || result.error}`);
       }
     } catch (err) {
-      setOAuthStatus("❌ Verification failed");
+      setOAuthStatus("❌ OAuth2 request failed");
     }
   };
 
@@ -333,12 +466,12 @@ export default function SettingsScreen({ onBack }) {
       const response = await window.api.getUserEmail({ repoType });
       if (response?.ok) {
         setUserEmail(response.email);
-        setUserEmailStatus(`✅ ${response.email}`);
+        setUserEmailStatus(`✅ Resolved: ${response.email}`);
       } else {
-        setUserEmailStatus(`❌ ${response?.error || 'Failed to fetch email'}`);
+        setUserEmailStatus(`❌ Failed: ${response?.error || 'Failed to fetch email'}`);
       }
     } catch (err) {
-      setUserEmailStatus(`❌ ${err?.message || 'Failed to fetch email'}`);
+      setUserEmailStatus(`❌ Failed: ${err?.message || 'Failed to fetch email'}`);
     }
   };
 
@@ -347,19 +480,19 @@ export default function SettingsScreen({ onBack }) {
     try {
       const response = await window.api.verifyMCP();
       if (response?.ok) {
-        setMcpStatus(`✅ ${response.message || 'MCP Server is available'}`);
+        setMcpVerifyStatus(`✅ ${response.message || 'MCP Server is available'}`);
       } else {
-        setMcpStatus(`⚠️ ${response?.message || response?.error || 'MCP not available'}`);
+        setMcpVerifyStatus(`⚠️ ${response?.message || response?.error || 'MCP not available'}`);
       }
     } catch (err) {
-      setMcpStatus(`❌ ${err?.message || 'Failed to check MCP'}`);
+      setMcpVerifyStatus(`❌ Failed to query MCP: ${err?.message}`);
     } finally {
       setMcpLoading(false);
     }
   };
 
   const requestOAuth2Token = async () => {
-    setOAuthStatus("Requesting token...");
+    setOAuthStatus("Requesting token from server...");
     try {
       const payload = {
         grantType: "client_credentials",
@@ -371,7 +504,7 @@ export default function SettingsScreen({ onBack }) {
 
       const result = await window.api.requestOAuth2Token(payload);
       if (!result?.ok) {
-        setOAuthStatus(`❌ ${result?.error || "Failed to request token"}`);
+        setOAuthStatus(`❌ OAuth Token Request Failed: ${result?.error || "Unknown Error"}`);
         return;
       }
 
@@ -382,30 +515,32 @@ export default function SettingsScreen({ onBack }) {
 
       setOAuth2((prev) => ({ ...prev, ...newToken }));
       setTokenResult(result.tokenResponse);
-      setOAuthStatus("✅ Token request succeeded");
+      setOAuthStatus("✅ Token retrieved successfully");
     } catch (err) {
-      setOAuthStatus("❌ Token request failed");
+      setOAuthStatus("❌ OAuth Request Failed");
     }
   };
 
   /* =============================
      SAVE CONFIG
-  ============================= */
+     ============================= */
   const saveConfig = async () => {
     try {
       setRepoStatus(null);
 
-      // Validate
+      // Validate Repo
       if (repoType === "github") {
         if (!github.token || !github.owner || !github.repo) {
-          setRepoStatus("❌ GitHub token + owner + repo are required");
+          setRepoStatus("❌ GitHub Token, Owner, and Repository are required fields.");
+          alert("⚠️ Please fill in all required repository fields");
           return;
         }
       }
 
       if (repoType === "azure") {
         if (!azure.org || !azure.project || !azure.repoIdOrName || !azure.pat) {
-          setRepoStatus("❌ Azure org + project + repo + PAT are required");
+          setRepoStatus("❌ Azure Org, Project, Repository, and PAT are required fields.");
+          alert("⚠️ Please fill in all required repository fields");
           return;
         }
       }
@@ -415,10 +550,18 @@ export default function SettingsScreen({ onBack }) {
         github: { ...github, baseUrl: github.baseUrl || undefined },
         azure: { ...azure, baseUrl: azure.baseUrl || undefined },
 
-        // migration-safe legacy key
+        // legacy compatibility
         githubToken: github.token,
 
-        llm: { ...llm, provider },
+        llm: {
+          provider,
+          ...(provider === "azure" ? azureLlm : provider === "openai" ? openaiLlm : ollamaLlm),
+          providers: {
+            azure: azureLlm,
+            openai: openaiLlm,
+            ollama: ollamaLlm
+          }
+        },
         email: {
           host: email.host,
           port: Number(email.port),
@@ -436,548 +579,1154 @@ export default function SettingsScreen({ onBack }) {
           tenantId: ifs.tenantId,
           clientId: ifs.clientId,
           clientSecret: ifs.clientSecret,
-          accessToken: ifs.accessToken
-        ,
-          corePath: ifsCorePath
+          accessToken: ifs.accessToken,
+          corePath: ifsCorePath,
+          customerPath: ifsCustomerPath
         },
         oauth2: { ...oauth2 },
         mcp: { ...mcp }
       });
 
-      alert("✅ Configuration saved");
+      alert("✅ Settings saved successfully!");
     } catch (err) {
       console.error("Save failed", err);
-      alert("❌ Failed to save config");
+      alert("❌ Failed to save configuration settings");
     }
   };
 
+  const TABS = [
+    { key: "repo", label: "Repository Config", icon: "📦" },
+    { key: "llm", label: "LLM Configuration", icon: "🧠" },
+    { key: "email", label: "Email / SMTP", icon: "✉️" },
+    { key: "ifs", label: "IFS ERP Integration", icon: "⚙️" },
+    { key: "mcp", label: "MCP Engine & Test", icon: "📡" },
+    { key: "rules", label: "Review Rules Dictionary", icon: "📋" }
+  ];
+
   if (loading) {
-    return <div style={{ padding: 20 }}>Loading settings...</div>;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg-app)', color: 'var(--text-secondary)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+          <div className="spinner" style={{ width: 32, height: 32, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+          <span style={{ fontSize: 13, fontWeight: 500 }}>Loading Settings...</span>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div style={{ padding: 20 }}>
-      <h2>Settings</h2>
-
-      <button onClick={onBack}>⬅ Back</button>
-
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
-        {[
-          { key: "repo", label: "Repo" },
-          { key: "llm", label: "LLM" },
-          { key: "email", label: "Email" },
-          { key: "ifs", label: "IFS ERP" },
-          { key: "mcp", label: "MCP" },
-          { key: "rules", label: "Rules" }
-        ].map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            style={{
-              padding: "8px 14px",
-              background: activeTab === tab.key ? "#1c7ed6" : "#f4f4f4",
-              color: activeTab === tab.key ? "white" : "black",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer"
-            }}
-          >
-            {tab.label}
+    <div className="app-shell" style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg-app)', color: 'var(--text-primary)' }}>
+      {/* Top Header */}
+      <header className="topbar">
+        <div className="topbar__left">
+          <div className="topbar__logo">⚙️</div>
+          <div className="topbar__title">
+            <span className="brand">AQS Inspect Settings</span>
+            <span className="subtitle" style={{ color: 'var(--text-secondary)' }}>Configure Git providers, LLM configurations, ERP validation rules, and solution directories</span>
+          </div>
+        </div>
+        <div className="topbar__actions" style={{ gap: '10px' }}>
+          <button onClick={onBack} className="btn ghost">
+            ⬅ Back to Workspace
           </button>
-        ))}
-      </div>
+          <button onClick={saveConfig} className="btn primary">
+            💾 Save Settings
+          </button>
+        </div>
+      </header>
 
-      <div style={{ marginTop: 22 }}>
-        {activeTab === "repo" && (
-          <>
-            <h3>Repository</h3>
-            <select
-              value={repoType}
-              onChange={(e) => setRepoType(e.target.value)}
-              style={{ width: "100%", padding: 8, marginTop: 6 }}
-            >
-              <option value="github">GitHub</option>
-              <option value="azure">Azure DevOps</option>
-            </select>
+      {/* Main Settings Body */}
+      <div className="workarea" style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {/* Left Tabs Bar */}
+        <aside className="sidebar" style={{ width: 260, minWidth: 260, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border-dark)', background: 'var(--bg-sidebar)', padding: '12px 8px' }}>
+          <div className="sidebar__title-wrap" style={{ padding: '4px 10px 12px 10px', borderBottom: '1px solid var(--border-dark)', marginBottom: '10px' }}>
+            <span className="sidebar__title" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Config Sections</span>
+          </div>
+          <div className="sidebar-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {TABS.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`az-tree-row ${activeTab === tab.key ? 'active' : ''}`}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  border: 'none',
+                  background: activeTab === tab.key ? 'var(--accent-subtle)' : 'transparent',
+                  color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  padding: '10px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: activeTab === tab.key ? '600' : '400',
+                  transition: 'all var(--transition-fast)'
+                }}
+              >
+                <span style={{ fontSize: '16px' }}>{tab.icon}</span>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+        </aside>
 
-            <div style={{ marginTop: 12 }}>
+        {/* Right Tab Content Viewer */}
+        <div className="settings-content" style={{ flex: 1, overflowY: 'auto', padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          
+          {/* 1. REPO TAB */}
+          {activeTab === "repo" && (
+            <div className="panel" style={{ margin: 0, padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: '700', borderBottom: '1px solid var(--border-dark)', paddingBottom: '10px', color: 'var(--text-primary)' }}>📦 Repository Configuration</h3>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxWidth: '320px' }}>
+                <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Repository Platform</label>
+                <select
+                  className="input"
+                  value={repoType}
+                  onChange={(e) => setRepoType(e.target.value)}
+                  style={{ width: '100%' }}
+                >
+                  <option value="github">GitHub</option>
+                  <option value="azure">Azure DevOps</option>
+                </select>
+              </div>
+
               {repoType === "github" && (
-                <>
-                  <input
-                    type="password"
-                    placeholder="GitHub Token"
-                    value={github.token}
-                    onChange={(e) => setGithub({ ...github, token: e.target.value })}
-                    style={{ width: "100%", marginTop: 10 }}
-                  />
-
-                  <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '4px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>GitHub Personal Access Token (PAT)</label>
                     <input
-                      placeholder="Owner (org/user)"
-                      value={github.owner}
-                      onChange={(e) => setGithub({ ...github, owner: e.target.value })}
-                      style={{ flex: 1 }}
-                    />
-                    <input
-                      placeholder="Repo"
-                      value={github.repo}
-                      onChange={(e) => setGithub({ ...github, repo: e.target.value })}
-                      style={{ flex: 1 }}
+                      type="password"
+                      className="input"
+                      placeholder="ghp_..."
+                      value={github.token}
+                      onChange={(e) => setGithub({ ...github, token: e.target.value })}
                     />
                   </div>
 
-                  <input
-                    placeholder="Base URL (optional, GitHub Enterprise)"
-                    value={github.baseUrl}
-                    onChange={(e) => setGithub({ ...github, baseUrl: e.target.value })}
-                    style={{ width: "100%", marginTop: 10 }}
-                  />
-                </>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Organization / Owner</label>
+                      <input
+                        className="input"
+                        placeholder="e.g. google"
+                        value={github.owner}
+                        onChange={(e) => setGithub({ ...github, owner: e.target.value })}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Repository Name</label>
+                      <input
+                        className="input"
+                        placeholder="e.g. antigravity"
+                        value={github.repo}
+                        onChange={(e) => setGithub({ ...github, repo: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Base URL (Optional — For GitHub Enterprise)</label>
+                    <input
+                      className="input"
+                      placeholder="e.g. https://github.company.com/api/v3"
+                      value={github.baseUrl}
+                      onChange={(e) => setGithub({ ...github, baseUrl: e.target.value })}
+                    />
+                  </div>
+                </div>
               )}
 
               {repoType === "azure" && (
-                <>
-                  <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '4px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Azure DevOps Organization</label>
+                      <input
+                        className="input"
+                        placeholder="e.g. my-org-name"
+                        value={azure.org}
+                        onChange={(e) => setAzure({ ...azure, org: e.target.value })}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Project Name</label>
+                      <input
+                        className="input"
+                        placeholder="e.g. my-project-name"
+                        value={azure.project}
+                        onChange={(e) => setAzure({ ...azure, project: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Repository ID or Name</label>
                     <input
-                      placeholder="Organization"
-                      value={azure.org}
-                      onChange={(e) => setAzure({ ...azure, org: e.target.value })}
-                      style={{ flex: 1 }}
-                    />
-                    <input
-                      placeholder="Project"
-                      value={azure.project}
-                      onChange={(e) => setAzure({ ...azure, project: e.target.value })}
-                      style={{ flex: 1 }}
+                      className="input"
+                      placeholder="e.g. my-repo"
+                      value={azure.repoIdOrName}
+                      onChange={(e) => setAzure({ ...azure, repoIdOrName: e.target.value })}
                     />
                   </div>
 
-                  <input
-                    placeholder="Repository ID or Name"
-                    value={azure.repoIdOrName}
-                    onChange={(e) => setAzure({ ...azure, repoIdOrName: e.target.value })}
-                    style={{ width: "100%", marginTop: 10 }}
-                  />
-
-                  <input
-                    type="password"
-                    placeholder="Azure DevOps PAT"
-                    value={azure.pat}
-                    onChange={(e) => setAzure({ ...azure, pat: e.target.value })}
-                    style={{ width: "100%", marginTop: 10 }}
-                  />
-
-                  <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Azure DevOps Personal Access Token (PAT)</label>
                     <input
-                      placeholder="Base URL (optional)"
-                      value={azure.baseUrl}
-                      onChange={(e) => setAzure({ ...azure, baseUrl: e.target.value })}
-                      style={{ flex: 1 }}
+                      type="password"
+                      className="input"
+                      placeholder="PAT token..."
+                      value={azure.pat}
+                      onChange={(e) => setAzure({ ...azure, pat: e.target.value })}
                     />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Base URL (Optional)</label>
+                      <input
+                        className="input"
+                        placeholder="e.g. https://dev.azure.com/my-org"
+                        value={azure.baseUrl}
+                        onChange={(e) => setAzure({ ...azure, baseUrl: e.target.value })}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>API Version</label>
+                      <input
+                        className="input"
+                        value={azure.apiVersion}
+                        onChange={(e) => setAzure({ ...azure, apiVersion: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button onClick={verifyToken} className="btn success">🔍 Verify Repository Settings</button>
+                {repoStatus && <span style={{ fontSize: '13px', fontWeight: '500', color: repoStatus.includes('✅') ? 'var(--green)' : 'var(--red)' }}>{repoStatus}</span>}
+              </div>
+            </div>
+          )}
+
+          {/* 2. LLM TAB */}
+          {activeTab === "llm" && (
+            <div className="panel" style={{ margin: 0, padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: '700', borderBottom: '1px solid var(--border-dark)', paddingBottom: '10px', color: 'var(--text-primary)' }}>🧠 AI / LLM Configuration</h3>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxWidth: '320px' }}>
+                <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>LLM Provider</label>
+                <select
+                  className="input"
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value)}
+                  style={{ width: '100%' }}
+                >
+                  <option value="azure">Azure OpenAI</option>
+                  <option value="openai">OpenAI (Official API)</option>
+                  <option value="ollama">Ollama (Local LLM)</option>
+                </select>
+              </div>
+
+              {provider === "azure" && (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Azure OpenAI Endpoint</label>
                     <input
-                      placeholder="API Version"
-                      value={azure.apiVersion}
-                      onChange={(e) => setAzure({ ...azure, apiVersion: e.target.value })}
-                      style={{ flex: 1 }}
+                      className="input"
+                      placeholder="https://your-resource.openai.azure.com/"
+                      value={azureLlm.endpoint}
+                      onChange={(e) => setAzureLlm({ ...azureLlm, endpoint: e.target.value })}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>API Key</label>
+                    <input
+                      type="password"
+                      className="input"
+                      placeholder="Enter Azure OpenAI API Key..."
+                      value={azureLlm.apiKey}
+                      onChange={(e) => setAzureLlm({ ...azureLlm, apiKey: e.target.value })}
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model / Deployment Name</label>
+                      <input
+                        className="input"
+                        placeholder="e.g. gpt-4o-mini"
+                        value={azureLlm.model}
+                        onChange={(e) => setAzureLlm({ ...azureLlm, model: e.target.value })}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>API Version</label>
+                      <input
+                        className="input"
+                        placeholder="e.g. 2024-02-15-preview"
+                        value={azureLlm.apiVersion}
+                        onChange={(e) => setAzureLlm({ ...azureLlm, apiVersion: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxWidth: '160px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Temperature</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      className="input"
+                      placeholder="e.g. 0.2"
+                      value={azureLlm.temperature}
+                      onChange={(e) => setAzureLlm({ ...azureLlm, temperature: Number(e.target.value) })}
                     />
                   </div>
                 </>
               )}
 
-              <div style={{ marginTop: 10 }}>
-                <button onClick={verifyToken}>🔍 Verify Repo Settings</button>
-                {repoStatus && <span style={{ marginLeft: 10 }}>{repoStatus}</span>}
-              </div>
-            </div>
-          </>
-        )}
-
-        {activeTab === "llm" && (
-          <>
-            <h3>LLM Provider</h3>
-            <select
-              value={provider}
-              onChange={(e) => setProvider(e.target.value)}
-              style={{ width: "100%", padding: 8, marginTop: 6 }}
-            >
-              <option value="azure">Azure OpenAI</option>
-              <option value="openai">OpenAI (api.openai.com)</option>
-            </select>
-
-            <h3 style={{ marginTop: 20 }}>LLM Configuration</h3>
-            {provider === "azure" && (
-              <input
-                placeholder="Azure Endpoint"
-                value={llm.endpoint}
-                onChange={(e) => setLLM({ ...llm, endpoint: e.target.value })}
-                style={{ width: "100%", marginTop: 10 }}
-              />
-            )}
-
-            <input
-              type="password"
-              placeholder="API Key"
-              value={llm.apiKey}
-              onChange={(e) => setLLM({ ...llm, apiKey: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-
-            <input
-              placeholder="Model / Deployment Name"
-              value={llm.model}
-              onChange={(e) => setLLM({ ...llm, model: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-
-            <input
-              type="number"
-              step="0.1"
-              placeholder="Temperature"
-              value={llm.temperature}
-              onChange={(e) => setLLM({ ...llm, temperature: Number(e.target.value) })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-
-            <div style={{ marginTop: 10 }}>
-              <button onClick={verifyLLM}>🧪 Verify LLM</button>
-              {llmStatus && <span style={{ marginLeft: 10 }}>{llmStatus}</span>}
-            </div>
-          </>
-        )}
-
-        {activeTab === "email" && (
-          <>
-            <h3>Email / SMTP</h3>
-            <input
-              placeholder="SMTP Host"
-              value={email.host}
-              onChange={(e) => setEmail({ ...email, host: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-              <input
-                type="number"
-                placeholder="Port"
-                value={email.port}
-                onChange={(e) => setEmail({ ...email, port: Number(e.target.value) })}
-                style={{ flex: 1 }}
-              />
-              <label style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
-                <input
-                  type="checkbox"
-                  checked={email.secure}
-                  onChange={(e) => setEmail({ ...email, secure: e.target.checked })}
-                />
-                Use TLS/SSL
-              </label>
-            </div>
-            <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-              <input
-                placeholder="SMTP Username"
-                value={email.user}
-                onChange={(e) => setEmail({ ...email, user: e.target.value })}
-                style={{ flex: 1 }}
-              />
-              <input
-                type="password"
-                placeholder="SMTP Password"
-                value={email.pass}
-                onChange={(e) => setEmail({ ...email, pass: e.target.value })}
-                style={{ flex: 1 }}
-              />
-            </div>
-            <input
-              placeholder="From Address"
-              value={email.from}
-              onChange={(e) => setEmail({ ...email, from: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <input
-              placeholder="To Address"
-              value={email.to}
-              onChange={(e) => setEmail({ ...email, to: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <input
-              placeholder="Reply-To Address"
-              value={email.replyTo}
-              onChange={(e) => setEmail({ ...email, replyTo: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-
-            <div style={{ marginTop: 10 }}>
-              <button onClick={verifyEmailSettings}>🔍 Verify SMTP</button>
-              {emailStatus && <span style={{ marginLeft: 10 }}>{emailStatus}</span>}
-            </div>
-          </>
-        )}
-
-        {activeTab === "ifs" && (
-          <>
-            <h3>IFS / ERP Configuration</h3>
-            <input
-              placeholder="IFS Metadata URL (optional)"
-              value={ifs.metadataUrl}
-              onChange={(e) => setIfs({ ...ifs, metadataUrl: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <div style={{ marginTop: 6, padding: 10, background: "#eefcf0", borderRadius: 6, color: "#0f5132" }}>
-              Optional explicit metadata endpoint. If automatic discovery fails, enter the full metadata URL here.
-            </div>
-            <input
-              placeholder="IFS OData URL"
-              value={ifs.odataUrl}
-              onChange={(e) => setIfs({ ...ifs, odataUrl: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <input
-              placeholder="IFS REST Base URL"
-              value={ifs.restUrl}
-              onChange={(e) => setIfs({ ...ifs, restUrl: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <input
-              placeholder="Tenant ID"
-              value={ifs.tenantId}
-              onChange={(e) => setIfs({ ...ifs, tenantId: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-
-            <h4 style={{ marginTop: 18 }}>OAuth2 Token Settings</h4>
-            <div style={{ marginTop: 6, padding: 10, background: "#eef2ff", borderRadius: 6, color: "#1e3a8a" }}>
-              grant_type is fixed to <strong>client_credentials</strong>.
-            </div>
-            <input
-              placeholder="Access Token URL"
-              value={oauth2.tokenUrl}
-              onChange={(e) => setOAuth2({ ...oauth2, tokenUrl: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <input
-              placeholder="Client ID"
-              value={oauth2.clientId}
-              onChange={(e) => setOAuth2({ ...oauth2, clientId: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <input
-              type="password"
-              placeholder="Client Secret"
-              value={oauth2.clientSecret}
-              onChange={(e) => setOAuth2({ ...oauth2, clientSecret: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <input
-              placeholder="Scope"
-              value={oauth2.scope}
-              onChange={(e) => setOAuth2({ ...oauth2, scope: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <input
-              placeholder="Access Token"
-              value={oauth2.accessToken}
-              onChange={(e) => setOAuth2({ ...oauth2, accessToken: e.target.value })}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-
-            <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-              <button onClick={requestOAuth2Token}>⚡ Generate / Refresh Token</button>
-              <button onClick={verifyOAuth}>🔍 Verify OAuth2</button>
-            </div>
-            {oauthStatus && <div style={{ marginTop: 10 }}>{oauthStatus}</div>}
-            {tokenResult && (
-              <pre style={{ marginTop: 10, maxHeight: 180, overflowY: "auto", background: "#f9f9f9", padding: 10 }}>
-                {JSON.stringify(tokenResult, null, 2)}
-              </pre>
-            )}
-            <div style={{ marginTop: 10 }}>
-              <button onClick={verifyIFSConnection}>🔍 Verify IFS Connection</button>
-              {ifsStatus && <span style={{ marginLeft: 10 }}>{ifsStatus}</span>}
-            </div>
-            <div style={{ marginTop: 18 }}>
-              <h4>IFS Core Local Path (optional)</h4>
-              <input
-                placeholder="Local path to IFS core solution (for rule generation)"
-                value={ifsCorePath}
-                onChange={(e) => setIfsCorePath(e.target.value)}
-                style={{ width: "100%", marginTop: 6 }}
-              />
-              <div style={{ marginTop: 6, fontSize: 12 }} className="muted">
-                Optional: provide the path where your IFS core/source is downloaded. The MCP engine will attempt to
-                load contextual rules (e.g., expected .cdb artifacts) from this location.
-              </div>
-            </div>
-            {ifsDebug && (
-              <div style={{ marginTop: 10, padding: 10, background: "#fff3cd", borderRadius: 6, fontSize: "0.85em" }}>
-                <strong>Debug Info:</strong>
-                {ifsDebug.requestUrl && (
-                  <div style={{ marginTop: 6 }}>
-                    <strong>Request URL:</strong> {ifsDebug.requestUrl}
+              {provider === "openai" && (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>API Key</label>
+                    <input
+                      type="password"
+                      className="input"
+                      placeholder="Enter OpenAI API Key..."
+                      value={openaiLlm.apiKey}
+                      onChange={(e) => setOpenaiLlm({ ...openaiLlm, apiKey: e.target.value })}
+                    />
                   </div>
-                )}
-                {ifsDebug.requestHeaders && (
-                  <div style={{ marginTop: 6 }}>
-                    <strong>Headers:</strong>
-                    <pre style={{ background: "#fff", padding: 6, marginTop: 4, border: "1px solid #ddd", borderRadius: 3, overflow: "auto", maxHeight: 100 }}>
-                      {JSON.stringify(ifsDebug.requestHeaders, null, 2)}
-                    </pre>
-                  </div>
-                )}
-                {ifsDebug.responseStatus && (
-                  <div style={{ marginTop: 6 }}>
-                    <strong>Response Status:</strong> {ifsDebug.responseStatus}
-                  </div>
-                )}
-                {ifsDebug.responseData && (
-                  <div style={{ marginTop: 6 }}>
-                    <strong>Response Data:</strong>
-                    <pre style={{ background: "#fff", padding: 6, marginTop: 4, border: "1px solid #ddd", borderRadius: 3, overflow: "auto", maxHeight: 120 }}>
-                      {typeof ifsDebug.responseData === "string" ? ifsDebug.responseData : JSON.stringify(ifsDebug.responseData, null, 2)}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
 
-        {activeTab === "mcp" && (
-          <>
-            <h3>MCP Engine</h3>
-            <select
-              value={mcp.mode}
-              onChange={(e) => setMcp({ ...mcp, mode: e.target.value })}
-              style={{ width: "100%", padding: 8, marginTop: 6 }}
-            >
-              <option value="hybrid">Hybrid AI + Rule Engine</option>
-              <option value="rules-only">Rules Only</option>
-              <option value="ai-only">AI Only</option>
-            </select>
-
-            <label style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
-              <input
-                type="checkbox"
-                checked={mcp.enableImpactAnalysis}
-                onChange={(e) => setMcp({ ...mcp, enableImpactAnalysis: e.target.checked })}
-              />
-              Enable PR → ERP Impact Analysis
-            </label>
-
-            <div style={{ marginTop: 12 }}>
-              <button onClick={refreshMCPStatus}>📡 Refresh MCP Status</button>
-              <button onClick={refreshAuditTrail} style={{ marginLeft: 10 }}>
-                🧾 Load Audit Trail
-              </button>
-              {mcpStatus && (
-                <div style={{ marginTop: 10, whiteSpace: "pre-wrap" }}>
-                  <strong>MCP Status:</strong> {typeof mcpStatus === "string" ? mcpStatus : JSON.stringify(mcpStatus, null, 2)}
-                </div>
-              )}
-              {auditTrail?.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <strong>Audit Trail:</strong>
-                  <pre style={{ maxHeight: 180, overflowY: "auto", background: "#f4f4f4", padding: 10 }}>
-                    {JSON.stringify(auditTrail, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {activeTab === "rules" && (
-          <>
-            <h3>Review Rules</h3>
-            <p>Manage and view all review rules including built-in and dynamic rules from IFS core.</p>
-            
-            <h4 style={{ marginTop: 18 }}>Available Rules</h4>
-            <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <button onClick={loadRules} disabled={rulesLoading}>
-                {rulesLoading ? "Loading..." : "📋 Load All Rules"}
-              </button>
-              <span style={{ fontWeight: "bold", color: "#0b69ff" }}>Total Rules: {rules.length}</span>
-            </div>
-
-            {rules.length > 0 && (
-              <div style={{ marginTop: 18 }}>
-                <div style={{ maxHeight: 400, overflowY: "auto", border: "1px solid #ddd", borderRadius: 6, padding: 10 }}>
-                  {rules.map((rule, idx) => (
-                    <div 
-                      key={idx} 
-                      style={{ 
-                        marginBottom: 12, 
-                        padding: 10, 
-                        background: "#f9f9f9", 
-                        borderRadius: 4, 
-                        borderLeft: `4px solid ${rule.severity === 'Blocker' ? '#dc3545' : rule.severity === 'Major' ? '#ff9800' : '#28a745'}`
-                      }}
-                    >
-                      <div style={{ fontWeight: "bold", marginBottom: 4 }}>
-                        {rule.title} <span style={{ fontSize: "0.85em", color: "#666" }}>({rule.id})</span>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model / Deployment Name</label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <select
+                          className="input"
+                          value={showOpenaiCustom ? "custom" : (openaiModels.includes(openaiLlm.model) ? openaiLlm.model : "custom")}
+                          onChange={(e) => {
+                            if (e.target.value === "custom") {
+                              setShowOpenaiCustom(true);
+                            } else {
+                              setShowOpenaiCustom(false);
+                              setOpenaiLlm({ ...openaiLlm, model: e.target.value });
+                            }
+                          }}
+                          style={{ flex: 1 }}
+                        >
+                          {openaiModels.map(m => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                          <option value="custom">Custom...</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={detectOpenaiModels}
+                          className="btn ghost"
+                          disabled={detectingOpenai}
+                          style={{ whiteSpace: 'nowrap' }}
+                        >
+                          {detectingOpenai ? "Detecting..." : "Auto-Detect"}
+                        </button>
                       </div>
-                      <div style={{ fontSize: "0.9em", color: "#666", marginBottom: 4 }}>
-                        <span style={{ background: "#e3f2fd", padding: "2px 6px", borderRadius: 3, marginRight: 6 }}>
-                          Severity: {rule.severity}
-                        </span>
-                        {rule.category && (
-                          <span style={{ background: "#f3e5f5", padding: "2px 6px", borderRadius: 3 }}>
-                            Category: {rule.category}
-                          </span>
-                        )}
-                      </div>
-                      {rule.description && (
-                        <div style={{ fontSize: "0.85em", color: "#555" }}>
-                          {rule.description}
-                        </div>
+                      {(showOpenaiCustom || !openaiModels.includes(openaiLlm.model)) && (
+                        <input
+                          className="input"
+                          placeholder="Enter custom model name (e.g. gpt-4-32k)..."
+                          value={openaiLlm.model}
+                          onChange={(e) => setOpenaiLlm({ ...openaiLlm, model: e.target.value })}
+                          style={{ marginTop: '4px' }}
+                        />
                       )}
                     </div>
-                  ))}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Temperature</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        className="input"
+                        placeholder="e.g. 0.2"
+                        value={openaiLlm.temperature}
+                        onChange={(e) => setOpenaiLlm({ ...openaiLlm, temperature: Number(e.target.value) })}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {provider === "ollama" && (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Ollama Local Endpoint</label>
+                    <input
+                      className="input"
+                      placeholder="http://localhost:11434"
+                      value={ollamaLlm.endpoint}
+                      onChange={(e) => setOllamaLlm({ ...ollamaLlm, endpoint: e.target.value })}
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model Name</label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <select
+                          className="input"
+                          value={showOllamaCustom ? "custom" : (ollamaModels.includes(ollamaLlm.model) ? ollamaLlm.model : "custom")}
+                          onChange={(e) => {
+                            if (e.target.value === "custom") {
+                              setShowOllamaCustom(true);
+                            } else {
+                              setShowOllamaCustom(false);
+                              setOllamaLlm({ ...ollamaLlm, model: e.target.value });
+                            }
+                          }}
+                          style={{ flex: 1 }}
+                        >
+                          {ollamaModels.map(m => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                          <option value="custom">Custom...</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={detectOllamaModels}
+                          className="btn ghost"
+                          disabled={detectingOllama}
+                          style={{ whiteSpace: 'nowrap' }}
+                        >
+                          {detectingOllama ? "Detecting..." : "Auto-Detect"}
+                        </button>
+                      </div>
+                      {(showOllamaCustom || !ollamaModels.includes(ollamaLlm.model)) && (
+                        <input
+                          className="input"
+                          placeholder="Enter custom model name (e.g. llama3:8b)..."
+                          value={ollamaLlm.model}
+                          onChange={(e) => setOllamaLlm({ ...ollamaLlm, model: e.target.value })}
+                          style={{ marginTop: '4px' }}
+                        />
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Temperature</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        className="input"
+                        placeholder="e.g. 0.2"
+                        value={ollamaLlm.temperature}
+                        onChange={(e) => setOllamaLlm({ ...ollamaLlm, temperature: Number(e.target.value) })}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button onClick={verifyLLM} className="btn success">🧪 Test LLM Connection</button>
+                {llmStatus && <span style={{ fontSize: '13px', fontWeight: '500', color: llmStatus.includes('✅') ? 'var(--green)' : 'var(--red)' }}>{llmStatus}</span>}
+              </div>
+            </div>
+          )}
+
+          {/* 3. EMAIL TAB */}
+          {activeTab === "email" && (
+            <div className="panel" style={{ margin: 0, padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: '700', borderBottom: '1px solid var(--border-dark)', paddingBottom: '10px', color: 'var(--text-primary)' }}>✉️ SMTP Email Settings</h3>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>SMTP Host</label>
+                  <input
+                    className="input"
+                    placeholder="smtp.example.com"
+                    value={email.host}
+                    onChange={(e) => setEmail({ ...email, host: e.target.value })}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Port</label>
+                  <input
+                    type="number"
+                    className="input"
+                    placeholder="587"
+                    value={email.port}
+                    onChange={(e) => setEmail({ ...email, port: Number(e.target.value) })}
+                  />
                 </div>
               </div>
-            )}
 
-            <h4 style={{ marginTop: 20 }}>User Email</h4>
-            <p style={{ fontSize: "0.9em", color: "#666" }}>
-              Fetch your email address from the repository to automatically populate review feedback recipients.
-            </p>
-            <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-              <button onClick={fetchUserEmail}>🔄 Fetch My Email</button>
-              {userEmail && (
-                <input 
-                  type="text" 
-                  value={userEmail} 
-                  readOnly
-                  style={{ flex: 1, padding: "8px", minWidth: 200 }}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <input
+                  type="checkbox"
+                  id="emailSecure"
+                  checked={email.secure}
+                  onChange={(e) => setEmail({ ...email, secure: e.target.checked })}
+                  style={{ cursor: 'pointer' }}
                 />
-              )}
-            </div>
-            {userEmailStatus && (
-              <div style={{ marginTop: 8, fontSize: "0.9em" }}>{userEmailStatus}</div>
-            )}
-
-            <h4 style={{ marginTop: 20 }}>MCP Server Status</h4>
-            <p style={{ fontSize: "0.9em", color: "#666" }}>
-              Verify if the Model Context Protocol (MCP) server is available for advanced analysis features.
-            </p>
-            <div style={{ marginTop: 10 }}>
-              <button onClick={verifyMCP} disabled={mcpLoading}>
-                {mcpLoading ? "Checking..." : "🔍 Check MCP Server"}
-              </button>
-            </div>
-            {mcpStatus && (
-              <div style={{ marginTop: 8, fontSize: "0.9em", padding: 10, background: mcpStatus.includes("✅") ? "#d4edda" : "#fff3cd", borderRadius: 4 }}>
-                {mcpStatus}
+                <label htmlFor="emailSecure" style={{ fontSize: '13px', cursor: 'pointer', userSelect: 'none' }}>Use Secure TLS/SSL connection</label>
               </div>
-            )}
-          </>
-        )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>SMTP Username</label>
+                  <input
+                    className="input"
+                    placeholder="user@example.com"
+                    value={email.user}
+                    onChange={(e) => setEmail({ ...email, user: e.target.value })}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>SMTP Password</label>
+                  <input
+                    type="password"
+                    className="input"
+                    placeholder="SMTP password..."
+                    value={email.pass}
+                    onChange={(e) => setEmail({ ...email, pass: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>From Address</label>
+                  <input
+                    className="input"
+                    placeholder="sender@example.com"
+                    value={email.from}
+                    onChange={(e) => setEmail({ ...email, from: e.target.value })}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>To Address (Default)</label>
+                  <input
+                    className="input"
+                    placeholder="recipient@example.com"
+                    value={email.to}
+                    onChange={(e) => setEmail({ ...email, to: e.target.value })}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reply-To Address</label>
+                  <input
+                    className="input"
+                    placeholder="replies@example.com"
+                    value={email.replyTo}
+                    onChange={(e) => setEmail({ ...email, replyTo: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button onClick={verifyEmailSettings} className="btn success">🔍 Verify SMTP Server</button>
+                {emailStatus && <span style={{ fontSize: '13px', fontWeight: '500', color: emailStatus.includes('✅') ? 'var(--green)' : 'var(--red)' }}>{emailStatus}</span>}
+              </div>
+            </div>
+          )}
+
+          {/* 4. IFS TAB */}
+          {activeTab === "ifs" && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              
+              {/* Core & Customer Solution Paths */}
+              <div className="panel" style={{ margin: 0, padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: '700', borderBottom: '1px solid var(--border-dark)', paddingBottom: '10px', color: 'var(--text-primary)' }}>📂 Local IFS Solution Directories</h3>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Core Solution Local Path (Standard)</label>
+                  <input
+                    className="input"
+                    placeholder="e.g. C:\IFS\CoreSolution"
+                    value={ifsCorePath}
+                    onChange={(e) => setIfsCorePath(e.target.value)}
+                  />
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    Absolute path to the baseline/standard IFS product source files containing unmodified code.
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Customer Solution Local Path (Customized Overrides)</label>
+                  <input
+                    className="input"
+                    placeholder="e.g. C:\IFS\CustomerSolution"
+                    value={ifsCustomerPath}
+                    onChange={(e) => setIfsCustomerPath(e.target.value)}
+                  />
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    Absolute path to your customized customer solution containing files that override or extend the core solution.
+                  </div>
+                </div>
+
+                <div style={{ padding: '12px 14px', background: 'var(--accent-subtle)', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 'var(--radius-md)', display: 'flex', gap: '8px', alignItems: 'flex-start', marginTop: '4px' }}>
+                  <span style={{ fontSize: '16px' }}>💡</span>
+                  <div style={{ fontSize: '12.5px', color: 'var(--text-primary)', lineHeight: '1.4' }}>
+                    <strong>Validation Overlay Logic</strong>: AQS Inspect combines these folders during file integrity checks. It searches the **Customer Solution** first to evaluate your latest customized files, then falls back to the standard **Core Solution** if no overrides exist.
+                  </div>
+                </div>
+              </div>
+
+              {/* IFS API Config */}
+              <div className="panel" style={{ margin: 0, padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: '700', borderBottom: '1px solid var(--border-dark)', paddingBottom: '10px', color: 'var(--text-primary)' }}>⚙️ IFS Cloud ERP API Endpoints</h3>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>IFS OData Service URL</label>
+                  <input
+                    className="input"
+                    placeholder="https://ifs-odata.company.com/main/odata/v2"
+                    value={ifs.odataUrl}
+                    onChange={(e) => setIfs({ ...ifs, odataUrl: e.target.value })}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>IFS REST Base URL</label>
+                  <input
+                    className="input"
+                    placeholder="https://ifs-rest.company.com/main/rest"
+                    value={ifs.restUrl}
+                    onChange={(e) => setIfs({ ...ifs, restUrl: e.target.value })}
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Tenant ID</label>
+                    <input
+                      className="input"
+                      placeholder="e.g. ifs-prod"
+                      value={ifs.tenantId}
+                      onChange={(e) => setIfs({ ...ifs, tenantId: e.target.value })}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Explicit Metadata URL (Optional)</label>
+                    <input
+                      className="input"
+                      placeholder="Endpoint metadata path..."
+                      value={ifs.metadataUrl}
+                      onChange={(e) => setIfs({ ...ifs, metadataUrl: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', marginTop: '10px' }}>OAuth2 Client Credentials</h4>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Access Token Endpoint</label>
+                  <input
+                    className="input"
+                    placeholder="https://identity.company.com/oauth2/token"
+                    value={oauth2.tokenUrl}
+                    onChange={(e) => setOAuth2({ ...oauth2, tokenUrl: e.target.value })}
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Client ID</label>
+                    <input
+                      className="input"
+                      placeholder="Client credentials client ID..."
+                      value={oauth2.clientId}
+                      onChange={(e) => setOAuth2({ ...oauth2, clientId: e.target.value })}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Client Secret</label>
+                    <input
+                      type="password"
+                      className="input"
+                      placeholder="Client credentials secret..."
+                      value={oauth2.clientSecret}
+                      onChange={(e) => setOAuth2({ ...oauth2, clientSecret: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Scope</label>
+                    <input
+                      className="input"
+                      placeholder="default"
+                      value={oauth2.scope}
+                      onChange={(e) => setOAuth2({ ...oauth2, scope: e.target.value })}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Access Token (Cached / Custom)</label>
+                    <input
+                      className="input"
+                      placeholder="Bearer token value..."
+                      value={oauth2.accessToken}
+                      onChange={(e) => setOAuth2({ ...oauth2, accessToken: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '10px' }}>
+                  <button onClick={requestOAuth2Token} className="btn primary">⚡ Generate / Refresh Token</button>
+                  <button onClick={verifyOAuth} className="btn">🔍 Verify OAuth2 Credentials</button>
+                  <button onClick={verifyIFSConnection} className="btn success">📡 Verify Connection to IFS</button>
+                </div>
+
+                {oauthStatus && (
+                  <div style={{ fontSize: '13px', fontWeight: '500', color: oauthStatus.includes('✅') ? 'var(--green)' : 'var(--red)', marginTop: '4px' }}>
+                    OAuth: {oauthStatus}
+                  </div>
+                )}
+                {ifsStatus && (
+                  <div style={{ fontSize: '13px', fontWeight: '500', color: ifsStatus.includes('✅') ? 'var(--green)' : 'var(--red)' }}>
+                    ERP: {ifsStatus}
+                  </div>
+                )}
+
+                {tokenResult && (
+                  <pre style={{ margin: '8px 0 0 0', maxHeight: 120, overflowY: 'auto', background: 'var(--bg-input)', border: '1px solid var(--border-dark)', padding: 10, borderRadius: 'var(--radius-md)', fontSize: '11px', fontFamily: 'JetBrains Mono', color: 'var(--text-secondary)' }}>
+                    {JSON.stringify(tokenResult, null, 2)}
+                  </pre>
+                )}
+
+                {ifsDebug && (
+                  <div style={{ marginTop: 10, padding: 12, background: 'rgba(227,179,65,0.08)', border: '1px solid rgba(227,179,65,0.25)', borderRadius: 'var(--radius-md)', fontSize: '12px' }}>
+                    <strong style={{ color: 'var(--amber)' }}>Debug Response Info:</strong>
+                    {ifsDebug.requestUrl && <div style={{ marginTop: 4 }}>URL: <code>{ifsDebug.requestUrl}</code></div>}
+                    {ifsDebug.responseStatus && <div style={{ marginTop: 4 }}>Status: <code>{ifsDebug.responseStatus}</code></div>}
+                    {ifsDebug.responseData && (
+                      <pre style={{ background: 'var(--bg-input)', padding: 8, marginTop: 6, border: '1px solid var(--border-dark)', borderRadius: 4, overflow: 'auto', maxHeight: 100, fontFamily: 'JetBrains Mono', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                        {typeof ifsDebug.responseData === "string" ? ifsDebug.responseData : JSON.stringify(ifsDebug.responseData, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 5. MCP TAB */}
+          {activeTab === "mcp" && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div className="panel" style={{ margin: 0, padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: '700', borderBottom: '1px solid var(--border-dark)', paddingBottom: '10px', color: 'var(--text-primary)' }}>📡 MCP Rule Engine Configuration</h3>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxWidth: '320px' }}>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Rule Engine Mode</label>
+                  <select
+                    className="input"
+                    value={mcp.mode}
+                    onChange={(e) => setMcp({ ...mcp, mode: e.target.value })}
+                    style={{ width: '100%' }}
+                  >
+                    <option value="hybrid">Hybrid (Deterministic Rules + AI)</option>
+                    <option value="rules-only">Deterministic Rules Only</option>
+                    <option value="ai-only">AI Review Engine Only</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
+                  <input
+                    type="checkbox"
+                    id="impactAnalysis"
+                    checked={mcp.enableImpactAnalysis}
+                    onChange={(e) => setMcp({ ...mcp, enableImpactAnalysis: e.target.checked })}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <label htmlFor="impactAnalysis" style={{ fontSize: '13px', cursor: 'pointer', userSelect: 'none' }}>Enable PR → ERP metadata dependencies & impact analysis</label>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
+                  <button onClick={refreshMCPStatus} className="btn">📡 Refresh MCP Status</button>
+                  <button onClick={verifyMCP} disabled={mcpLoading} className="btn primary">
+                    {mcpLoading ? "Verifying..." : "🔍 Test MCP Server Connection"}
+                  </button>
+                  <button onClick={refreshAuditTrail} className="btn">🧾 Load Audit Trail</button>
+                </div>
+
+                {mcpVerifyStatus && (
+                  <div style={{ padding: 12, background: mcpVerifyStatus.includes('✅') ? 'var(--green-soft)' : 'var(--amber-soft)', border: `1px solid ${mcpVerifyStatus.includes('✅') ? 'var(--green-border)' : 'var(--amber-border)'}`, borderRadius: 'var(--radius-md)', fontSize: '13px', fontWeight: '500', color: mcpVerifyStatus.includes('✅') ? 'var(--green)' : 'var(--amber)' }}>
+                    {mcpVerifyStatus}
+                  </div>
+                )}
+
+                {mcpStatus && (
+                  <pre style={{ maxHeight: 150, overflowY: 'auto', background: 'var(--bg-input)', border: '1px solid var(--border-dark)', padding: 12, borderRadius: 'var(--radius-md)', fontSize: '11px', fontFamily: 'JetBrains Mono', color: 'var(--text-secondary)' }}>
+                    {typeof mcpStatus === "string" ? mcpStatus : JSON.stringify(mcpStatus, null, 2)}
+                  </pre>
+                )}
+
+                {auditTrail?.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <strong style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>System Audit Log:</strong>
+                    <pre style={{ maxHeight: 180, overflowY: 'auto', background: 'var(--bg-input)', border: '1px solid var(--border-dark)', padding: 12, borderRadius: 'var(--radius-md)', fontSize: '11px', fontFamily: 'JetBrains Mono', color: 'var(--text-secondary)' }}>
+                      {JSON.stringify(auditTrail, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+
+              {/* PR LIVE VALIDATION TEST CONTAINER */}
+              <div className="panel" style={{ margin: 0, padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: '700', borderBottom: '1px solid var(--border-dark)', paddingBottom: '10px', color: 'var(--text-primary)' }}>🧪 Connected ERP Live Validation Scan</h3>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
+                  Enter a Pull Request ID or direct PR URL below to run a mock validation scan against your local Core/Customer folders.
+                </p>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <input
+                    className="input"
+                    placeholder="PR ID or URL (e.g. 752)"
+                    value={testPrUrl}
+                    onChange={(e) => setTestPrUrl(e.target.value)}
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!testPrUrl) {
+                        alert("⚠️ Please enter a Pull Request reference ID first");
+                        return;
+                      }
+                      setTestLoading(true);
+                      setTestResults(null);
+                      try {
+                        const res = await window.api.analyzePullRequestImpact({ prUrlOrId: testPrUrl });
+                        if (res?.ok) {
+                          setTestResults(res.result);
+                        } else {
+                          alert("❌ Analysis failed: " + (res?.error || "Unknown error"));
+                        }
+                      } catch (e) {
+                        alert("❌ Failed: " + e.message);
+                      } finally {
+                        setTestLoading(false);
+                      }
+                    }}
+                    disabled={testLoading}
+                    className="btn primary"
+                  >
+                    {testLoading ? "Running validation scan..." : "🧪 Validate Code Integrity"}
+                  </button>
+                </div>
+
+                {testResults && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
+                    <h4 style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>Validation Findings</h4>
+                    {testResults.findings?.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border-dark)', borderRadius: 'var(--radius-md)', padding: '10px', background: 'var(--bg-input)' }}>
+                        {testResults.findings.map((f, i) => (
+                          <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '2px', borderBottom: i < testResults.findings.length - 1 ? '1px solid var(--border-dark)' : 'none', paddingBottom: i < testResults.findings.length - 1 ? '8px' : 0, paddingTop: i > 0 ? '8px' : 0, fontSize: '12.5px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{
+                                background: f.severity === "Blocker" || f.severity === "Critical" ? 'var(--red-soft)' : 'var(--amber-soft)',
+                                color: f.severity === "Blocker" || f.severity === "Critical" ? 'var(--red)' : 'var(--amber)',
+                                border: `1px solid ${f.severity === "Blocker" || f.severity === "Critical" ? 'var(--red-border)' : 'var(--amber-border)'}`,
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                fontSize: '10px',
+                                fontWeight: '700'
+                              }}>{f.severity.toUpperCase()}</span>
+                              <strong>{f.title}</strong>
+                            </div>
+                            <div style={{ color: 'var(--text-secondary)', paddingLeft: '0', marginTop: '2px' }}>{f.explanation}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '13px', color: 'var(--green)', padding: '10px 14px', background: 'var(--green-soft)', border: '1px solid var(--green-border)', borderRadius: 'var(--radius-md)', display: 'flex', gap: '8px' }}>
+                        <span>✅</span>
+                        <span>All checks passed successfully! Code changes are fully consistent with core and customer databases.</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 6. RULES TAB */}
+          {activeTab === "rules" && (
+            <div className="panel" style={{ margin: 0, padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: '700', borderBottom: '1px solid var(--border-dark)', paddingBottom: '10px', color: 'var(--text-primary)' }}>📋 Enterprise Review Rules Dictionary</h3>
+              <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', margin: 0 }}>
+                Manage the static and dynamic validation rules enforced during static code analysis. Dynamic rules are extracted from your local IFS core directory.
+              </p>
+
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={async () => {
+                    if (!ifsCorePath) {
+                      alert("⚠️ Please configure the IFS Core Local Path first!");
+                      return;
+                    }
+                    setRulesLoading(true);
+                    try {
+                      const res = await window.api.buildRulesFromCore({ corePath: ifsCorePath });
+                      if (res?.ok) {
+                        alert(`✅ Core scan completed! Extracted and saved ${res.count} dynamic rules.`);
+                        loadRules();
+                      } else {
+                        alert("❌ Core scan failed: " + res?.error);
+                      }
+                    } catch (e) {
+                      alert("❌ Scan request failed: " + e.message);
+                    } finally {
+                      setRulesLoading(false);
+                    }
+                  }}
+                  disabled={rulesLoading}
+                  className="btn primary"
+                >
+                  🔍 Build Rules Dictionary from Core Solution
+                </button>
+                <button
+                  onClick={async () => {
+                    setRulesLoading(true);
+                    await window.api.approveAllRules();
+                    alert("✅ All validation rules approved");
+                    loadRules();
+                  }}
+                  disabled={rulesLoading}
+                  className="btn success"
+                >
+                  ✓ Approve All Rules
+                </button>
+                <button
+                  onClick={async () => {
+                    setRulesLoading(true);
+                    await window.api.disapproveAllRules();
+                    alert("❌ All validation rules set to disapproved");
+                    loadRules();
+                  }}
+                  disabled={rulesLoading}
+                  className="btn danger"
+                >
+                  ✗ Disapprove All Rules
+                </button>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--border-dark)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyItems: 'center', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>Rules Registry</h4>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <button onClick={loadRules} disabled={rulesLoading} className="btn ghost" style={{ height: '28px' }}>
+                      {rulesLoading ? "Syncing..." : "🔄 Refresh Rules"}
+                    </button>
+                    <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--accent-light)' }}>Total Active Rules: {rules.length}</span>
+                  </div>
+                </div>
+
+                {rules.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto', border: '1px solid var(--border-dark)', padding: '10px', borderRadius: 'var(--radius-md)', background: 'var(--bg-input)' }}>
+                    {rules.map((rule, idx) => {
+                      const isEditing = editingRuleId === rule.id;
+                      const sevColor = rule.severity === 'Blocker' || rule.severity === 'Critical' ? 'var(--red)' : rule.severity === 'Major' || rule.severity === 'Warning' ? 'var(--amber)' : 'var(--green)';
+                      
+                      return (
+                        <div
+                          key={idx}
+                          style={{
+                            padding: '14px',
+                            background: 'var(--bg-card)',
+                            borderRadius: 'var(--radius-md)',
+                            borderLeft: `4px solid ${sevColor}`,
+                            border: '1px solid var(--border-dark)',
+                            borderLeftWidth: '4px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px'
+                          }}
+                        >
+                          {isEditing ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                <strong>ID: {rule.id}</strong> (Source: {rule.source})
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Rule Title</label>
+                                <input
+                                  className="input"
+                                  value={editFormData.title || ""}
+                                  onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                                />
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Description / Explanatory Text</label>
+                                <textarea
+                                  className="input"
+                                  style={{ height: '60px', padding: '8px', resize: 'vertical' }}
+                                  value={editFormData.description || ""}
+                                  onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                                />
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Remediation Recommendation</label>
+                                <input
+                                  className="input"
+                                  value={editFormData.recommendation || ""}
+                                  onChange={(e) => setEditFormData({ ...editFormData, recommendation: e.target.value })}
+                                />
+                              </div>
+                              
+                              <div style={{ display: "grid", gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Severity Level</label>
+                                  <select
+                                    className="input"
+                                    value={editFormData.severity || "Major"}
+                                    onChange={(e) => setEditFormData({ ...editFormData, severity: e.target.value })}
+                                  >
+                                    <option value="Blocker">Blocker</option>
+                                    <option value="Major">Major</option>
+                                    <option value="Minor">Minor</option>
+                                    <option value="Info">Info</option>
+                                  </select>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Language / Category</label>
+                                  <input
+                                    className="input"
+                                    value={editFormData.category || "all"}
+                                    onChange={(e) => setEditFormData({ ...editFormData, category: e.target.value })}
+                                  />
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Regex Evaluation Pattern (Optional)</label>
+                                <input
+                                  className="input"
+                                  style={{ fontFamily: "monospace" }}
+                                  value={editFormData.pattern || ""}
+                                  onChange={(e) => setEditFormData({ ...editFormData, pattern: e.target.value })}
+                                />
+                              </div>
+
+                              <div style={{ display: "flex", gap: 8, marginTop: '4px' }}>
+                                <button
+                                  onClick={async () => {
+                                    setRulesLoading(true);
+                                    try {
+                                      const res = await window.api.updateRule({ rule: editFormData });
+                                      if (res?.ok) {
+                                        alert("Rule registry updated successfully!");
+                                        setEditingRuleId(null);
+                                        loadRules();
+                                      } else {
+                                        alert("Failed to update rule: " + res?.error);
+                                      }
+                                    } catch (err) {
+                                      alert("Error saving rule: " + err.message);
+                                    } finally {
+                                      setRulesLoading(false);
+                                    }
+                                  }}
+                                  className="btn primary"
+                                >
+                                  Save Rule Changes
+                                </button>
+                                <button onClick={() => setEditingRuleId(null)} className="btn ghost">Cancel</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: '10px' }}>
+                                <div>
+                                  <span style={{ fontWeight: "700", fontSize: "13.5px", color: 'var(--text-primary)' }}>{rule.title}</span>
+                                  <span style={{ fontSize: "11px", color: 'var(--text-muted)', marginLeft: "8px" }}>({rule.id})</span>
+                                </div>
+                                <div style={{ display: "flex", gap: '6px', flexShrink: 0 }}>
+                                  <button
+                                    onClick={async () => {
+                                      setRulesLoading(true);
+                                      const nextStatus = !rule.approved;
+                                      await window.api.approveRule({ ruleId: rule.id, approvedStatus: nextStatus });
+                                      loadRules();
+                                    }}
+                                    className={`btn ${rule.approved ? 'success' : 'ghost'}`}
+                                    style={{ padding: "3px 8px", fontSize: "11px", height: '24px' }}
+                                  >
+                                    {rule.approved ? "✓ Approved" : "✗ Disapproved"}
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setEditingRuleId(rule.id);
+                                      setEditFormData(rule);
+                                    }}
+                                    className="btn"
+                                    style={{ padding: "3px 8px", fontSize: "11px", height: '24px' }}
+                                  >
+                                    ✎ Edit
+                                  </button>
+                                </div>
+                              </div>
+                              <div style={{ fontSize: "11px", display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
+                                <span style={{ background: 'var(--bg-hover)', border: '1px solid var(--border-dark)', color: 'var(--text-secondary)', padding: "1px 6px", borderRadius: 3 }}>
+                                  Severity: {rule.severity}
+                                </span>
+                                <span style={{ background: 'var(--bg-hover)', border: '1px solid var(--border-dark)', color: 'var(--text-secondary)', padding: "1px 6px", borderRadius: 3 }}>
+                                  Language: {rule.category || 'all'}
+                                </span>
+                                <span style={{ background: 'var(--bg-hover)', border: '1px solid var(--border-dark)', color: 'var(--text-secondary)', padding: "1px 6px", borderRadius: 3 }}>
+                                  Source: {rule.source}
+                                </span>
+                              </div>
+                              {rule.description && (
+                                <div style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginTop: '6px', lineHeight: '1.4' }}>
+                                  {rule.description}
+                                </div>
+                              )}
+                              {rule.recommendation && (
+                                <div style={{ fontSize: "12px", color: "var(--accent-light)", marginTop: '4px', fontStyle: 'italic' }}>
+                                  💡 recommendation: {rule.recommendation}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '30px', border: '1px dashed var(--border-dark)', borderRadius: 'var(--radius-md)', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    No rules loaded in registry. Click refresh or import standard rules.
+                  </div>
+                )}
+              </div>
+
+              {/* Developer Metadata / User Sync */}
+              <div style={{ borderTop: '1px solid var(--border-dark)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>User Profile Integration</h4>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
+                  Sync your developer profile email address from your repository to match commit histories.
+                </p>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <button onClick={fetchUserEmail} className="btn">🔄 Fetch Account Email</button>
+                  {userEmail && (
+                    <input
+                      type="text"
+                      className="input"
+                      value={userEmail}
+                      readOnly
+                      style={{ maxWidth: '320px', fontFamily: 'JetBrains Mono', fontSize: '12.5px' }}
+                    />
+                  )}
+                  {userEmailStatus && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{userEmailStatus}</span>}
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
       </div>
-
-      <hr />
-
-      {/* =============================
-          SAVE
-      ============================= */}
-      <button onClick={saveConfig}>💾 Save Config</button>
     </div>
   );
 }
