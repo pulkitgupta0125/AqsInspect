@@ -2,6 +2,21 @@ import React, { useMemo, useState } from "react";
 
 const getPath = (f) => f?.filename || f?.fileName || f?.path || "";
 
+function getStatusBadge(status) {
+  if (!status) return null;
+  const s = String(status).toLowerCase();
+  if (s === "added" || s === "add") {
+    return <span style={{ color: "var(--green, #3fb950)", marginLeft: 6, fontWeight: "bold", fontSize: "11px" }}>(+)</span>;
+  }
+  if (s === "removed" || s === "deleted" || s === "delete") {
+    return <span style={{ color: "var(--red, #f85149)", marginLeft: 6, fontWeight: "bold", fontSize: "11px" }}>(-)</span>;
+  }
+  if (s === "modified" || s === "edit" || s === "renamed" || s === "changed") {
+    return <span style={{ color: "var(--sky, #58a6ff)", marginLeft: 6, fontWeight: "bold", fontSize: "11px" }}>[edit]</span>;
+  }
+  return null;
+}
+
 /* File extension → color-coded icon */
 function FileIcon({ name = "" }) {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
@@ -147,9 +162,7 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
 
           <span className="az-tree-name">{node.name}</span>
 
-          {folderAgg && (folderAgg.critical > 0 || folderAgg.warning > 0 || folderAgg.info > 0) && (
-            <SeverityDot stats={folderAgg} />
-          )}
+          {/* No warning, major, minor stats shown against folder */}
         </div>
 
         {open && node.children?.length > 0 && (
@@ -182,7 +195,25 @@ function TreeNode({ node, level, onFileSelect, selectedFile, statsByFile }) {
         <FileIcon name={node.name || ""} />
       </span>
 
-      <span className="az-tree-name">{node.name}</span>
+      <span className="az-tree-name">
+        {node.name}
+        {getStatusBadge(node?.fileData?.status)}
+      </span>
+
+      {node?.fileData?.processing && (
+        <span className="file-spinner" style={{ 
+          marginLeft: 'auto', 
+          marginRight: 6,
+          display: 'inline-block', 
+          width: 11, 
+          height: 11, 
+          border: '2px solid rgba(255,255,255,0.15)', 
+          borderTopColor: 'var(--accent-light)', 
+          borderRadius: '50%', 
+          animation: 'spin 0.8s linear infinite',
+          flexShrink: 0
+        }} />
+      )}
 
       <SeverityDot stats={fileStats} />
     </div>

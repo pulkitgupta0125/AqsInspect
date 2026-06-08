@@ -82,6 +82,8 @@ contextBridge.exposeInMainWorld('api', {
   buildRulesFromCore: (payload) => ipcRenderer.invoke('rules:buildFromCore', payload),
   getUserEmail: (payload) => ipcRenderer.invoke('user:getEmail', payload),
   verifyMCP: () => ipcRenderer.invoke('mcp:verify'),
+  saveFeedback: (payload) => ipcRenderer.invoke('review:saveFeedback', payload),
+  loadFeedback: () => ipcRenderer.invoke('review:loadFeedback'),
 
   /* =============================
      DEBUG (OPTIONAL)

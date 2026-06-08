@@ -97,6 +97,7 @@ async function listPullRequests({ filters, repoSettings }) {
     createdAt: pr.creationDate,
     createdBy: pr.createdBy?.displayName || pr.createdBy?.uniqueName || "unknown",
     status: mapAzureStatus(pr),
+    description: pr.description || "",
   }));
 
   setCached(cacheKey, norm, 60_000);

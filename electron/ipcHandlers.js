@@ -8,6 +8,9 @@ const store = require("./configStore"); // exports.getConfig/getLLMConfig/saveLL
 const mcpServer = require("./mcpServer");
 const oauth2 = require("./security/oauth2");
 
+// In-memory cache for PR details to avoid redundant API hits for multiple file reviews
+const prDetailsCache = new Map();
+
 // -----------------------------
 // Config persistence (FULL MERGE)
 // -----------------------------
@@ -1295,8 +1298,8 @@ async function fetchAzurePullRequestDiff({ prUrl, cfg }) {
   const changes = Array.isArray(diffs?.changes) ? diffs.changes : [];
 
   const fileChanges = changes
-    .map((c) => ({ path: c?.item?.path, changeType: c?.changeType || "edit" }))
-    .filter((c) => typeof c.path === "string" && c.path && !c.path.endsWith("/"));
+    .map((c) => ({ path: c?.item?.path, changeType: c?.changeType || "edit", isFolder: c?.item?.isFolder }))
+    .filter((c) => typeof c.path === "string" && c.path && !c.path.endsWith("/") && !c.isFolder);
 
   const MAX_FILES = 60;
   const limited = fileChanges.slice(0, MAX_FILES);
@@ -1341,7 +1344,12 @@ async function fetchAzurePullRequestDiff({ prUrl, cfg }) {
       html_url: pr?._links?.web?.href || pr?.url || prUrl,
       changed_files: files.length,
       additions: files.reduce((s, f) => s + (f.additions || 0), 0),
-      deletions: files.reduce((s, f) => s + (f.deletions || 0), 0)
+      deletions: files.reduce((s, f) => s + (f.deletions || 0), 0),
+      createdBy: pr?.createdBy?.displayName || pr?.createdBy?.uniqueName || "unknown",
+      createdAt: pr?.creationDate,
+      description: pr?.description || "",
+      sourceBranch: pr?.sourceRefName?.replace("refs/heads/", ""),
+      targetBranch: pr?.targetRefName?.replace("refs/heads/", "")
     },
     filesCount: files.length,
     files,
@@ -1439,7 +1447,12 @@ ${f.patch || ""}`)
       html_url: pr.html_url,
       changed_files: pr.changed_files,
       additions: pr.additions,
-      deletions: pr.deletions
+      deletions: pr.deletions,
+      createdBy: pr.user?.login || "unknown",
+      createdAt: pr.created_at,
+      description: pr.body || "",
+      sourceBranch: pr.head?.ref,
+      targetBranch: pr.base?.ref
     },
     filesCount: files.length,
     files,
@@ -1604,26 +1617,75 @@ ipcMain.handle("review:run", async (_evt, payload) => {
 
   // If per-file review is requested, run each file through the Multi-Agent Delegator
   if (files.length > 0) {
+    const prFilesList = files.map(item => item.filename);
+
     for (const f of files) {
       if (!f.filename) continue;
       
       const fileClassifier = require("./reviewEngine/fileClassifier");
       const ext = path.extname(f.filename);
-      const cat = fileClassifier.classifyFile(f.filename, f.filename).category;
+      const classification = await fileClassifier.classifyFile(f.filename, f.filename);
+      const cat = classification.category;
 
       const mockFile = {
         path: f.filename,
         fullPath: f.filename,
         extension: ext,
         category: cat,
-        size: f.patch ? f.patch.length : 100
+        size: 100,
+        patch: f.patch || ""
       };
+
+      const cfg = store && typeof store.getConfig === "function" ? store.getConfig() : {};
+
+      // 1. Try to fetch full file content from remote PR (side = "new")
+      let fileContent = "";
+      let retrievedFullContent = false;
+      if (payload?.prUrl) {
+        try {
+          fileContent = await fetchPRFileContentHelper({
+            filename: f.filename,
+            side: "new",
+            prUrl: payload.prUrl,
+            repoType: payload.repoType,
+            token: payload.token
+          }, cfg);
+          retrievedFullContent = true;
+        } catch (err) {
+          console.warn(`[Review] Could not fetch full PR content for ${f.filename}:`, err.message);
+        }
+      }
+
+      // 2. Fallback to local customer solution if remote fetch failed or wasn't run
+      if (!retrievedFullContent && cfg?.ifs?.customerPath) {
+        let cleanRelPath = f.filename;
+        if (/^[ab]\//i.test(cleanRelPath)) {
+          cleanRelPath = cleanRelPath.substring(2);
+        }
+        const fullLocal = path.join(cfg.ifs.customerPath, cleanRelPath);
+        if (fs.existsSync(fullLocal)) {
+          try {
+            fileContent = fs.readFileSync(fullLocal, "utf-8");
+            retrievedFullContent = true;
+          } catch (err) {
+            console.warn(`[Review] Failed to read local customer file ${fullLocal}:`, err.message);
+          }
+        }
+      }
+
+      // 3. Last resort fallback: use the patch/diff itself
+      if (!retrievedFullContent) {
+        fileContent = f.patch || "";
+      }
+
+      mockFile.size = fileContent.length;
 
       const agentResult = await require("./reviewEngine/agents").delegateReview(
         mockFile,
-        f.patch || "",
+        fileContent,
         llm,
-        postFunc
+        postFunc,
+        prFilesList
       );
 
       consolidatedFindings.push(...(agentResult.findings || []).map(finding => ({
@@ -1638,7 +1700,8 @@ ipcMain.handle("review:run", async (_evt, payload) => {
       fullPath: "PR_DIFF.diff",
       extension: ".diff",
       category: "generic",
-      size: unifiedDiff.length
+      size: unifiedDiff.length,
+      patch: unifiedDiff
     };
 
     const agentResult = await require("./reviewEngine/agents").delegateReview(
@@ -1651,18 +1714,7 @@ ipcMain.handle("review:run", async (_evt, payload) => {
     consolidatedFindings.push(...(agentResult.findings || []));
   }
 
-  // Live OData ERP connected validation if configured (read-only)
-  const cfg = store && typeof store.getConfig === "function" ? store.getConfig() : {};
-  if (cfg?.ifs && (cfg.ifs.odataUrl || cfg.ifs.metadataUrl)) {
-    try {
-      const erpFindings = await mcpServer.validatePRAgainstERP({ files }, cfg.ifs);
-      if (erpFindings && erpFindings.length > 0) {
-        consolidatedFindings.push(...erpFindings);
-      }
-    } catch (err) {
-      console.warn("ERP connected validation during review failed:", err.message);
-    }
-  }
+  // Live OData ERP connected validation is disabled per user request
 
   // Enforce 3-tier sorting: IFS_AQS -> ORACLE -> IFS_ERP
   const classificationOrder = { "IFS_AQS": 1, "ORACLE": 2, "IFS_ERP": 3 };
@@ -1839,62 +1891,41 @@ ipcMain.handle("review:repo", async (_evt, payload) => {
 });
 
 ipcMain.handle("mcp:getStatus", async () => {
-  const status = mcpServer.getStatus();
-  return { ok: true, status };
+  return { ok: true, status: "disabled" };
 });
 
-ipcMain.handle("mcp:analyzeImpact", async (_evt, payload) => {
-  const cfg = store.getConfig ? store.getConfig() : readConfigFile();
-  const repoType = String(payload?.repoType || cfg?.repoType || "github").toLowerCase();
-  const repoSettings = repoType === "azure" ? cfg.azure : { ...cfg.github, token: cfg.githubToken || cfg.github?.token };
-
-  const result = await mcpServer.analyzePullRequestImpact({
-    prUrlOrId: payload?.prUrlOrId,
-    repoType,
-    repoSettings,
-    ifsConfig: cfg.ifs || {},
-    mcpConfig: cfg.mcp || {}
-  });
-
-  return { ok: true, result };
+ipcMain.handle("mcp:analyzeImpact", async () => {
+  return {
+    ok: true,
+    result: {
+      riskLevel: "Low",
+      impactedAreas: [],
+      summary: "MCP integration is disabled."
+    }
+  };
 });
 
 ipcMain.handle("mcp:fetchIFSMetadata", async () => {
-  const cfg = store.getConfig ? store.getConfig() : readConfigFile();
-  try {
-    const meta = await mcpServer.fetchIFSMetadata(cfg.ifs || {});
-    return { ok: true, meta };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
+  return { ok: false, error: "MCP integration is disabled." };
 });
 
-ipcMain.handle("mcp:verifyOAuth2", async (_evt, oauth2Config) => {
-  const cfg = store.getConfig ? store.getConfig() : readConfigFile();
-  const config = oauth2Config || cfg.oauth2 || {};
-  const result = await mcpServer.verifyOAuth2(config);
-  return { ok: result.valid, result };
+ipcMain.handle("mcp:verifyOAuth2", async () => {
+  return { ok: false, error: "MCP integration is disabled." };
 });
 
-ipcMain.handle("mcp:verifyIFSConnection", async (_evt, ifsConfig) => {
-  const cfg = store.getConfig ? store.getConfig() : readConfigFile();
-  const config = ifsConfig || cfg.ifs || {};
-  const result = await mcpServer.verifyIFSConnection(config);
-  return result;
+ipcMain.handle("mcp:verifyIFSConnection", async () => {
+  return { ok: false, error: "MCP integration is disabled." };
 });
 
 ipcMain.handle("mcp:getAuditTrail", async () => {
-  const status = mcpServer.getStatus();
-  return { ok: true, audit: status.lastAudit };
+  return { ok: true, audit: [] };
 });
 
 // =============================// ================= Full File Content (GitHub + Azure DevOps)
 // Exposes renderer API: window.api.getFileContent({ filename, side, repoType, prUrl, selectedPrId })
 // side: "new" (latest/head) | "old" (base)
 // =============================
-ipcMain.handle("file:getContent", async (_evt, payload) => {
-  const cfg = store.getConfig ? store.getConfig() : readConfigFile();
-
+async function fetchPRFileContentHelper(payload, cfg) {
   const filename = String(payload?.filename || "").trim();
   const side = String(payload?.side || "new").toLowerCase(); // "new" | "old"
   const prUrl = String(payload?.prUrl || payload?.selectedPrId || "").trim();
@@ -1937,14 +1968,25 @@ ipcMain.handle("file:getContent", async (_evt, payload) => {
       Accept: "application/json",
     };
 
-    // PR details to get commit ids
-    const prApiUrl = `${apiRoot}/pullRequests/${encodeURIComponent(prId)}?api-version=${encodeURIComponent(apiVersion)}`;
-    const pr = await azureGetJson(prApiUrl, headers);
+    // PR details to get commit ids (check cache first)
+    const cacheKey = `azure:${apiRoot}:${prId}`;
+    let prData;
+    const now = Date.now();
+    const cached = prDetailsCache.get(cacheKey);
+    if (cached && (now - cached.timestamp < 300000)) {
+      prData = cached.data;
+    } else {
+      const prApiUrl = `${apiRoot}/pullRequests/${encodeURIComponent(prId)}?api-version=${encodeURIComponent(apiVersion)}`;
+      prData = await azureGetJson(prApiUrl, headers);
+      if (prData) {
+        prDetailsCache.set(cacheKey, { data: prData, timestamp: now });
+      }
+    }
 
     const baseCommit =
-      pr?.lastMergeTargetCommit?.commitId || pr?.lastMergeCommit?.commitId;
+      prData?.lastMergeTargetCommit?.commitId || prData?.lastMergeCommit?.commitId;
     const headCommit =
-      pr?.lastMergeSourceCommit?.commitId || pr?.lastMergeCommit?.commitId;
+      prData?.lastMergeSourceCommit?.commitId || prData?.lastMergeCommit?.commitId;
 
     if (!baseCommit || !headCommit) {
       throw new Error("Unable to determine PR base/head commits from Azure DevOps response.");
@@ -1977,19 +2019,30 @@ ipcMain.handle("file:getContent", async (_evt, payload) => {
     // Parse PR URL to get owner/repo/pr#
     const { owner, repo, pull_number, apiBase } = parsePullRequestUrl(prUrl);
 
-    // Fetch PR details to get head/base SHA
-    const prApi = `${apiBase}/repos/${owner}/${repo}/pulls/${pull_number}`;
-    const prRes = await axios.get(prApi, {
-      headers: {
-        Authorization: `Bearer ${t}`,
-        Accept: "application/vnd.github+json",
-        "User-Agent": "AQSInspect",
-      },
-    });
-    const pr = prRes.data;
+    // Fetch PR details to get head/base SHA (check cache first)
+    const cacheKey = `github:${owner}:${repo}:${pull_number}`;
+    let prData;
+    const now = Date.now();
+    const cached = prDetailsCache.get(cacheKey);
+    if (cached && (now - cached.timestamp < 300000)) {
+      prData = cached.data;
+    } else {
+      const prApi = `${apiBase}/repos/${owner}/${repo}/pulls/${pull_number}`;
+      const prRes = await axios.get(prApi, {
+        headers: {
+          Authorization: `Bearer ${t}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "AQSInspect",
+        },
+      });
+      prData = prRes.data;
+      if (prData) {
+        prDetailsCache.set(cacheKey, { data: prData, timestamp: now });
+      }
+    }
 
-    const baseSha = pr?.base?.sha;
-    const headSha = pr?.head?.sha;
+    const baseSha = prData?.base?.sha;
+    const headSha = prData?.head?.sha;
 
     if (!baseSha || !headSha) throw new Error("Unable to determine PR base/head SHA from GitHub response.");
 
@@ -2018,6 +2071,16 @@ ipcMain.handle("file:getContent", async (_evt, payload) => {
     // If GitHub returns something else (e.g. directory)
     throw new Error("GitHub returned non-file content (path may be a directory or missing).");
   }
+}
+
+// =============================
+// ================= Full File Content (GitHub + Azure DevOps)
+// Exposes renderer API: window.api.getFileContent({ filename, side, repoType, prUrl, selectedPrId })
+// side: "new" (latest/head) | "old" (base)
+// =============================
+ipcMain.handle("file:getContent", async (_evt, payload) => {
+  const cfg = store.getConfig ? store.getConfig() : readConfigFile();
+  return await fetchPRFileContentHelper(payload, cfg);
 });
 
 // ===========================
@@ -2080,16 +2143,8 @@ ipcMain.handle('rules:disapproveAll', async (_evt) => {
   }
 });
 
-ipcMain.handle('rules:buildFromCore', async (_evt, payload) => {
-  const { corePath } = payload || {};
-  try {
-    const dynamicRuleBuilder = require('./reviewEngine/dynamicRuleBuilder');
-    const generated = dynamicRuleBuilder.buildDynamicRulesFromIfsCore(corePath);
-    return { ok: true, count: generated.length, rules: generated };
-  } catch (e) {
-    console.error('rules:buildFromCore failed:', e?.message || e);
-    return { ok: false, error: e?.message || 'Failed to scan core path and build rules' };
-  }
+ipcMain.handle('rules:buildFromCore', async () => {
+  return { ok: false, error: 'Rules generation from Core Solution is disabled.' };
 });
 
 // ===========================
@@ -2161,24 +2216,63 @@ ipcMain.handle('user:getEmail', async (_evt, payload) => {
 // MCP Verification
 // ===========================
 ipcMain.handle('mcp:verify', async (_evt) => {
+  return {
+    ok: false,
+    status: 'disabled',
+    available: false,
+    message: '❌ MCP Server is disabled'
+  };
+});
+
+ipcMain.handle("review:saveFeedback", async (_evt, payload) => {
+  const { findingKey, status } = payload || {};
+  if (!findingKey || !status) {
+    return { ok: false, error: "Missing required arguments" };
+  }
+  
   try {
-    const mcpServer = require('./mcpServer');
-    if (!mcpServer) {
-      return { ok: false, status: 'MCP Server not found', available: false };
+    const fs = require('fs');
+    const path = require('path');
+    const userDataPath = app.getPath('userData');
+    const feedbackFile = path.join(userDataPath, 'review_feedback.json');
+    
+    let feedbackDb = {};
+    if (fs.existsSync(feedbackFile)) {
+      try {
+        feedbackDb = JSON.parse(fs.readFileSync(feedbackFile, 'utf-8'));
+      } catch (e) {
+        console.error("Failed to parse feedback DB:", e.message);
+      }
     }
     
-    // Check if MCP server is running/configured
-    const status = typeof mcpServer.getStatus === 'function' ? await mcpServer.getStatus() : 'Unknown';
-    const available = mcpServer && typeof mcpServer === 'object';
-    
-    return { 
-      ok: available, 
-      status: status || 'MCP Server is available', 
-      available,
-      message: available ? '✅ MCP Server is loaded and ready' : '❌ MCP Server not available'
+    feedbackDb[findingKey] = {
+      status,
+      timestamp: new Date().toISOString()
     };
-  } catch (e) {
-    console.error('mcp:verify failed:', e?.message || e);
-    return { ok: false, status: 'Error checking MCP', available: false, error: e?.message };
+    
+    fs.writeFileSync(feedbackFile, JSON.stringify(feedbackDb, null, 2));
+    console.log(`[Feedback Loop] Saved feedback for key "${findingKey}": ${status}`);
+    return { ok: true };
+  } catch (err) {
+    console.error("Failed to save review feedback:", err.message);
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle("review:loadFeedback", async () => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const userDataPath = app.getPath('userData');
+    const feedbackFile = path.join(userDataPath, 'review_feedback.json');
+    
+    if (fs.existsSync(feedbackFile)) {
+      const content = fs.readFileSync(feedbackFile, 'utf-8');
+      return { ok: true, feedback: JSON.parse(content) };
+    }
+    return { ok: true, feedback: {} };
+  } catch (err) {
+    console.error("Failed to load review feedback:", err.message);
+    return { ok: false, error: err.message, feedback: {} };
   }
 });

@@ -67,6 +67,7 @@ async function listPullRequests({ filters, repoSettings }) {
     createdAt: it.created_at,
     createdBy: it.user?.login || "unknown",
     status: normalizeStatus(it, status),
+    description: it.body || "",
   }));
 
   setCached(cacheKey, items, 60_000);

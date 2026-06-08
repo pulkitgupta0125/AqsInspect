@@ -9,7 +9,7 @@ const store = require('../configStore');
 const rulesStore = require('./rulesStore');
 const { buildDynamicRulesFromIfsCore } = require('./dynamicRuleBuilder');
 
-function evaluateRulesForFile(file, findings = [], content = "") {
+function evaluateRulesForFile(file, findings = [], content = "", prFiles = []) {
   const normalizedCategory = String(file.category || "other").toLowerCase();
   const allRules = rulesStore.loadAllRules();
   const approvedRules = allRules.filter(r => r.approved === true);
@@ -52,11 +52,31 @@ function evaluateRulesForFile(file, findings = [], content = "") {
         if (content) {
           const matches = Array.from(new Set((content.match(/([\w\-\/\\\.]+\.cdb)\b/gi) || [])));
           for (const m of matches) {
-            const candidate = m.replace(/^[\\/]+/, "");
+            let candidate = m.replace(/^[\\/]+/, "");
+            // Clean git diff prefixes a/ and b/ if present
+            if (/^[ab]\//i.test(candidate)) {
+              candidate = candidate.substring(2);
+            }
+            
             let exists = false;
             
+            // Check if present in the PR files (being introduced in the open PR!)
+            if (prFiles && prFiles.length > 0) {
+              const normCandidate = candidate.toLowerCase().replace(/\\/g, '/');
+              const foundInPr = prFiles.some(pf => {
+                let normPf = String(pf || "").toLowerCase().replace(/\\/g, '/');
+                if (/^[ab]\//i.test(normPf)) {
+                  normPf = normPf.substring(2);
+                }
+                return normPf === normCandidate || normPf.endsWith('/' + normCandidate);
+              });
+              if (foundInPr) {
+                exists = true;
+              }
+            }
+            
             // Check customer solution first (contains customized latest files)
-            if (customerPath) {
+            if (!exists && customerPath) {
               const fullCustomer = path.isAbsolute(candidate) ? candidate : path.join(customerPath, candidate);
               try {
                 exists = fs.existsSync(fullCustomer);

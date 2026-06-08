@@ -286,7 +286,9 @@ function loadAllRules() {
         try {
           const content = fs.readFileSync(path.join(RULES_DIR, f), 'utf-8');
           const ruleObj = JSON.parse(content);
-          rules.push(ruleObj);
+          if (ruleObj && ruleObj.id) {
+            rules.push(ruleObj);
+          }
         } catch (e) {
           console.error(`Error loading rule file ${f}:`, e.message);
         }
