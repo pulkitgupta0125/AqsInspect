@@ -9,8 +9,8 @@ export default function SettingsScreen({ onBack }) {
 
   // Repo settings
   const [repoType, setRepoType] = useState("github");
-  const [github, setGithub] = useState({ token: "", owner: "", repo: "", baseUrl: "" });
-  const [azure, setAzure] = useState({ org: "", project: "", repoIdOrName: "", pat: "", baseUrl: "", apiVersion: "7.1" });
+  const [github, setGithub] = useState({ token: "", owner: "", repo: "", baseUrl: "", enableAccept: true, enableReject: true });
+  const [azure, setAzure] = useState({ org: "", project: "", repoIdOrName: "", pat: "", baseUrl: "", apiVersion: "7.1", enableAccept: true, enableReject: true });
 
   // LLM settings
   const [provider, setProvider] = useState("azure");
@@ -118,7 +118,9 @@ export default function SettingsScreen({ onBack }) {
           token: cfg?.github?.token || cfg?.githubToken || "",
           owner: cfg?.github?.owner || "",
           repo: cfg?.github?.repo || "",
-          baseUrl: cfg?.github?.baseUrl || ""
+          baseUrl: cfg?.github?.baseUrl || "",
+          enableAccept: cfg?.github?.enableAccept !== false,
+          enableReject: cfg?.github?.enableReject !== false
         });
 
         setAzure({
@@ -127,7 +129,9 @@ export default function SettingsScreen({ onBack }) {
           repoIdOrName: cfg?.azure?.repoIdOrName || "",
           pat: cfg?.azure?.pat || "",
           baseUrl: cfg?.azure?.baseUrl || "",
-          apiVersion: cfg?.azure?.apiVersion || "7.1"
+          apiVersion: cfg?.azure?.apiVersion || "7.1",
+          enableAccept: cfg?.azure?.enableAccept !== false,
+          enableReject: cfg?.azure?.enableReject !== false
         });
 
         if (cfg?.llm) {
@@ -736,6 +740,32 @@ export default function SettingsScreen({ onBack }) {
                       onChange={(e) => setGithub({ ...github, baseUrl: e.target.value })}
                     />
                   </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-dark)', paddingTop: '12px', marginTop: '4px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feature Controls</label>
+                    <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                        <input
+                          type="checkbox"
+                          id="github-enable-accept"
+                          checked={github.enableAccept !== false}
+                          onChange={(e) => setGithub({ ...github, enableAccept: e.target.checked })}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        Enable Accept Pull Request
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                        <input
+                          type="checkbox"
+                          id="github-enable-reject"
+                          checked={github.enableReject !== false}
+                          onChange={(e) => setGithub({ ...github, enableReject: e.target.checked })}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        Enable Reject Pull Request
+                      </label>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -800,6 +830,32 @@ export default function SettingsScreen({ onBack }) {
                         value={azure.apiVersion}
                         onChange={(e) => setAzure({ ...azure, apiVersion: e.target.value })}
                       />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-dark)', paddingTop: '12px', marginTop: '4px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feature Controls</label>
+                    <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                        <input
+                          type="checkbox"
+                          id="azure-enable-accept"
+                          checked={azure.enableAccept !== false}
+                          onChange={(e) => setAzure({ ...azure, enableAccept: e.target.checked })}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        Enable Accept Pull Request
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                        <input
+                          type="checkbox"
+                          id="azure-enable-reject"
+                          checked={azure.enableReject !== false}
+                          onChange={(e) => setAzure({ ...azure, enableReject: e.target.checked })}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        Enable Reject/Abandon Pull Request
+                      </label>
                     </div>
                   </div>
                 </div>
@@ -1491,25 +1547,120 @@ export default function SettingsScreen({ onBack }) {
                   onClick={async () => {
                     setRulesLoading(true);
                     await window.api.approveAllRules();
-                    alert("✅ All validation rules approved");
+                    alert("✅ All validation rules enabled");
                     loadRules();
                   }}
                   disabled={rulesLoading}
                   className="btn success"
                 >
-                  ✓ Approve All Rules
+                  ✓ Enable All Rules
                 </button>
                 <button
                   onClick={async () => {
                     setRulesLoading(true);
                     await window.api.disapproveAllRules();
-                    alert("❌ All validation rules set to disapproved");
+                    alert("❌ All validation rules disabled");
                     loadRules();
                   }}
                   disabled={rulesLoading}
                   className="btn danger"
                 >
-                  ✗ Disapprove All Rules
+                  ✗ Disable All Rules
+                </button>
+                <button
+                  onClick={async () => {
+                    const confirm1 = window.confirm("⚠️ Are you sure you want to delete all rules in the registry?");
+                    if (confirm1) {
+                      const confirm2 = window.confirm("⚠️ This will permanently delete custom rules and remove built-in rules. Proceed?");
+                      if (confirm2) {
+                        setRulesLoading(true);
+                        try {
+                          const res = await window.api.deleteAllRules();
+                          if (res?.ok) {
+                            alert("✅ All rules deleted successfully!");
+                            loadRules();
+                          } else {
+                            alert("❌ Failed to delete rules: " + res?.error);
+                          }
+                        } catch (e) {
+                          alert("❌ Error: " + e.message);
+                        } finally {
+                          setRulesLoading(false);
+                        }
+                      }
+                    }
+                  }}
+                  disabled={rulesLoading}
+                  className="btn danger"
+                  style={{ background: 'var(--red-soft)', color: 'var(--red)', border: '1px solid var(--red-border)' }}
+                >
+                  🗑 Delete All Rules
+                </button>
+                <button
+                  onClick={async () => {
+                    setRulesLoading(true);
+                    try {
+                      const res = await window.api.importRules();
+                      if (res?.ok) {
+                        alert(`✅ Successfully imported ${res.count} rules!`);
+                        loadRules();
+                      } else if (res?.error !== 'cancelled') {
+                        alert("❌ Import failed: " + res?.error);
+                      }
+                    } catch (e) {
+                      alert("❌ Import failed: " + e.message);
+                    } finally {
+                      setRulesLoading(false);
+                    }
+                  }}
+                  disabled={rulesLoading}
+                  className="btn primary"
+                >
+                  📥 Import Rules
+                </button>
+                <button
+                  onClick={async () => {
+                    setRulesLoading(true);
+                    try {
+                      const res = await window.api.exportRules();
+                      if (res?.ok) {
+                        alert("✅ Rules exported successfully!");
+                      } else if (res?.error !== 'cancelled') {
+                        alert("❌ Export failed: " + res?.error);
+                      }
+                    } catch (e) {
+                      alert("❌ Export failed: " + e.message);
+                    } finally {
+                      setRulesLoading(false);
+                    }
+                  }}
+                  disabled={rulesLoading}
+                  className="btn"
+                >
+                  📤 Export Rules
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingRuleId("new");
+                    setEditFormData({
+                      id: "",
+                      title: "",
+                      description: "",
+                      recommendation: "",
+                      severity: "Major",
+                      category: "all",
+                      pattern: "",
+                      alertOnMissing: false,
+                      approved: true,
+                      source: "custom",
+                      classification: "CUSTOM"
+                    });
+                  }}
+                  disabled={rulesLoading}
+                  className="btn"
+                  style={{ background: 'var(--accent-subtle)', border: '1px solid var(--accent)' }}
+                >
+                  ➕ Create Custom Rule
                 </button>
               </div>
 
@@ -1520,12 +1671,151 @@ export default function SettingsScreen({ onBack }) {
                     <button onClick={loadRules} disabled={rulesLoading} className="btn ghost" style={{ height: '28px' }}>
                       {rulesLoading ? "Syncing..." : "🔄 Refresh Rules"}
                     </button>
-                    <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--accent-light)' }}>Total Active Rules: {rules.length}</span>
+                    <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--accent-light)' }}>Total Rules: {rules.length}</span>
                   </div>
                 </div>
 
-                {rules.length > 0 ? (
+                {(rules.length > 0 || editingRuleId === "new") ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto', border: '1px solid var(--border-dark)', padding: '10px', borderRadius: 'var(--radius-md)', background: 'var(--bg-input)' }}>
+                    {editingRuleId === "new" && (
+                      <div
+                        style={{
+                          padding: '14px',
+                          background: 'var(--bg-card)',
+                          borderRadius: 'var(--radius-md)',
+                          borderLeft: '4px solid var(--accent)',
+                          border: '1px solid var(--border-dark)',
+                          borderLeftWidth: '4px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px'
+                        }}
+                      >
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>
+                            ➕ Create New Custom Rule
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Rule ID (Unique, alphanumeric and hyphens/underscores only)</label>
+                            <input
+                              className="input"
+                              placeholder="e.g. CUSTOM-001"
+                              value={editFormData.id || ""}
+                              onChange={(e) => setEditFormData({ ...editFormData, id: e.target.value })}
+                            />
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Rule Title</label>
+                            <input
+                              className="input"
+                              placeholder="e.g. Avoid hardcoded temp directories"
+                              value={editFormData.title || ""}
+                              onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                            />
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Description / Explanatory Text</label>
+                            <textarea
+                              className="input"
+                              style={{ height: '60px', padding: '8px', resize: 'vertical' }}
+                              placeholder="Detailed explanation of the rule..."
+                              value={editFormData.description || ""}
+                              onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                            />
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Remediation Recommendation</label>
+                            <input
+                              className="input"
+                              placeholder="e.g. Use ConfigStore or temporary folder variables instead."
+                              value={editFormData.recommendation || ""}
+                              onChange={(e) => setEditFormData({ ...editFormData, recommendation: e.target.value })}
+                            />
+                          </div>
+                          
+                          <div style={{ display: "grid", gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Severity Level</label>
+                              <select
+                                className="input"
+                                value={editFormData.severity || "Major"}
+                                onChange={(e) => setEditFormData({ ...editFormData, severity: e.target.value })}
+                              >
+                                <option value="Blocker">Blocker</option>
+                                <option value="Major">Major</option>
+                                <option value="Minor">Minor</option>
+                                <option value="Info">Info</option>
+                              </select>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Language / Category</label>
+                              <input
+                                className="input"
+                                placeholder="e.g. plsql, javascript, all"
+                                value={editFormData.category || "all"}
+                                onChange={(e) => setEditFormData({ ...editFormData, category: e.target.value })}
+                              />
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>Regex Evaluation Pattern (Optional)</label>
+                            <input
+                              className="input"
+                              style={{ fontFamily: "monospace" }}
+                              placeholder="e.g. \\b(temp_dir|tmp)\\b"
+                              value={editFormData.pattern || ""}
+                              onChange={(e) => setEditFormData({ ...editFormData, pattern: e.target.value })}
+                            />
+                          </div>
+
+                          <div style={{ display: "flex", gap: 8, marginTop: '4px' }}>
+                            <button
+                              onClick={async () => {
+                                if (!editFormData.id || !editFormData.id.trim()) {
+                                  alert("⚠️ Rule ID is required");
+                                  return;
+                                }
+                                if (!/^[a-zA-Z0-9\-_]+$/.test(editFormData.id.trim())) {
+                                  alert("⚠️ Rule ID must contain only alphanumeric characters, underscores, and hyphens");
+                                  return;
+                                }
+                                const exists = rules.some(r => r.id.toLowerCase() === editFormData.id.trim().toLowerCase());
+                                if (exists) {
+                                  alert(`⚠️ A rule with ID '${editFormData.id.trim()}' already exists`);
+                                  return;
+                                }
+                                if (!editFormData.title || !editFormData.title.trim()) {
+                                  alert("⚠️ Rule Title is required");
+                                  return;
+                                }
+
+                                setRulesLoading(true);
+                                try {
+                                  const res = await window.api.updateRule({ rule: { ...editFormData, id: editFormData.id.trim() } });
+                                  if (res?.ok) {
+                                    alert("New rule created successfully!");
+                                    setEditingRuleId(null);
+                                    loadRules();
+                                  } else {
+                                    alert("Failed to create rule: " + res?.error);
+                                  }
+                                } catch (err) {
+                                  alert("Error creating rule: " + err.message);
+                                } finally {
+                                  setRulesLoading(false);
+                                }
+                              }}
+                              className="btn primary"
+                            >
+                              Create Rule
+                            </button>
+                            <button onClick={() => setEditingRuleId(null)} className="btn ghost">Cancel</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {rules.map((rule, idx) => {
                       const isEditing = editingRuleId === rule.id;
                       const sevColor = rule.severity === 'Blocker' || rule.severity === 'Critical' ? 'var(--red)' : rule.severity === 'Major' || rule.severity === 'Warning' ? 'var(--amber)' : 'var(--green)';
@@ -1654,7 +1944,7 @@ export default function SettingsScreen({ onBack }) {
                                     className={`btn ${rule.approved ? 'success' : 'ghost'}`}
                                     style={{ padding: "3px 8px", fontSize: "11px", height: '24px' }}
                                   >
-                                    {rule.approved ? "✓ Approved" : "✗ Disapproved"}
+                                    {rule.approved ? "✓ Enabled" : "✗ Disabled"}
                                   </button>
                                   <button
                                     onClick={() => {
@@ -1665,6 +1955,31 @@ export default function SettingsScreen({ onBack }) {
                                     style={{ padding: "3px 8px", fontSize: "11px", height: '24px' }}
                                   >
                                     ✎ Edit
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      const confirmed = window.confirm(`Are you sure you want to delete the rule "${rule.title}" (${rule.id})?`);
+                                      if (confirmed) {
+                                        setRulesLoading(true);
+                                        try {
+                                          const res = await window.api.deleteRule({ ruleId: rule.id });
+                                          if (res?.ok) {
+                                            alert("Rule deleted successfully!");
+                                            loadRules();
+                                          } else {
+                                            alert("Failed to delete rule: " + res?.error);
+                                          }
+                                        } catch (e) {
+                                          alert("Error deleting rule: " + e.message);
+                                        } finally {
+                                          setRulesLoading(false);
+                                        }
+                                      }
+                                    }}
+                                    className="btn danger"
+                                    style={{ padding: "3px 8px", fontSize: "11px", height: '24px', background: 'var(--red-soft)', color: 'var(--red)', border: '1px solid var(--red-border)' }}
+                                  >
+                                    🗑 Delete
                                   </button>
                                 </div>
                               </div>
@@ -1686,7 +2001,7 @@ export default function SettingsScreen({ onBack }) {
                               )}
                               {rule.recommendation && (
                                 <div style={{ fontSize: "12px", color: "var(--accent-light)", marginTop: '4px', fontStyle: 'italic' }}>
-                                  💡 recommendation: {rule.recommendation}
+                                  💡 Recommendation: {rule.recommendation}
                                 </div>
                               )}
                             </>
@@ -1700,27 +2015,6 @@ export default function SettingsScreen({ onBack }) {
                     No rules loaded in registry. Click refresh or import standard rules.
                   </div>
                 )}
-              </div>
-
-              {/* Developer Metadata / User Sync */}
-              <div style={{ borderTop: '1px solid var(--border-dark)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>User Profile Integration</h4>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
-                  Sync your developer profile email address from your repository to match commit histories.
-                </p>
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <button onClick={fetchUserEmail} className="btn">🔄 Fetch Account Email</button>
-                  {userEmail && (
-                    <input
-                      type="text"
-                      className="input"
-                      value={userEmail}
-                      readOnly
-                      style={{ maxWidth: '320px', fontFamily: 'JetBrains Mono', fontSize: '12.5px' }}
-                    />
-                  )}
-                  {userEmailStatus && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{userEmailStatus}</span>}
-                </div>
               </div>
             </div>
           )}

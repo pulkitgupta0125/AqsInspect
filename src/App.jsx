@@ -236,6 +236,18 @@ export default function App() {
     return prList.find(p => String(p.id) === String(selectedPrId)) || prMeta;
   }, [prList, selectedPrId, prMeta]);
 
+  const isAcceptEnabled = useMemo(() => {
+    return repoType === "azure"
+      ? config?.azure?.enableAccept !== false
+      : config?.github?.enableAccept !== false;
+  }, [config, repoType]);
+
+  const isRejectEnabled = useMemo(() => {
+    return repoType === "azure"
+      ? config?.azure?.enableReject !== false
+      : config?.github?.enableReject !== false;
+  }, [config, repoType]);
+
   const fileTree = useMemo(() => {
     if (!Array.isArray(actualFilesOnly)) return [];
 
@@ -783,6 +795,47 @@ useEffect(() => {
     }
   };
 
+  const getExportFilename = (prDetails, extension) => {
+    const prId = prDetails?.id || prDetails?.number || prDetails?.pullRequestId || selectedPrId || 'report';
+    let cleanPrId = prId;
+    if (typeof prId === 'string' && prId.includes('http')) {
+      const parts = prId.split('/');
+      cleanPrId = parts[parts.length - 1] || 'report';
+    }
+
+    let repoName = repoType === 'github' ? config?.github?.repo : config?.azure?.repoIdOrName;
+    const urlToParse = prUrl || selectedPrId || prDetails?.url || prDetails?.html_url || '';
+    if (!repoName && typeof urlToParse === 'string' && urlToParse.includes('http')) {
+      try {
+        const urlObj = new URL(urlToParse);
+        if (repoType === 'github') {
+          const parts = urlObj.pathname.split('/');
+          if (parts.length >= 3) {
+            repoName = parts[2];
+          }
+        } else if (repoType === 'azure') {
+          const parts = urlObj.pathname.split('/');
+          const gitIndex = parts.indexOf('_git');
+          if (gitIndex !== -1 && gitIndex + 1 < parts.length) {
+            repoName = parts[gitIndex + 1];
+          } else if (parts.length >= 4) {
+            repoName = parts[3];
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to parse repo name from URL:', e);
+      }
+    }
+
+    const sanitizeStr = (str) => {
+      return str.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
+    };
+
+    const repoPart = repoName ? `${sanitizeStr(repoName)}_` : '';
+    const prPart = cleanPrId && cleanPrId !== 'report' ? `PR_${cleanPrId}` : 'PR_report';
+    return `AQS_Review_${repoPart}${prPart}.${extension}`;
+  };
+
   const exportReport = async () => {
     if (!aiReview) {
       setError("Generate an AI review before exporting report.");
@@ -792,7 +845,7 @@ useEffect(() => {
       const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl });
       const prDetails = prDetailsRes?.pr || {};
       const md = composeReviewReport(prDetails, aiReview);
-      const filename = `AQS_Review_PR_${prDetails?.number || 'report'}.md`;
+      const filename = getExportFilename(prDetails, 'md');
       const saved = await window.api.saveReport({ defaultFilename: filename, content: md });
       if (!saved?.ok) {
         if (saved?.error && saved.error !== 'cancelled') setError(saved.error || 'Failed to save report');
@@ -813,7 +866,7 @@ useEffect(() => {
       const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl });
       const prDetails = prDetailsRes?.pr || prMeta || {};
       const md = composeReviewReport(prDetails, aiReview);
-      const filename = `AQS_Review_PR_${prDetails?.number || 'report'}.pdf`;
+      const filename = getExportFilename(prDetails, 'pdf');
       const saved = await window.api.saveReportPdf({
         defaultFilename: filename,
         content: md,
@@ -837,6 +890,16 @@ useEffect(() => {
     }
     setError(null);
     setStatusMessage("");
+
+    if (action === "accept" && !isAcceptEnabled) {
+      setError("Accept Pull Request action is disabled in Settings.");
+      return;
+    }
+    if ((action === "reject" || action === "abandon") && !isRejectEnabled) {
+      setError("Reject/Abandon Pull Request action is disabled in Settings.");
+      return;
+    }
+
     try {
       const res = await window.api.performPRAction({ repoType, prUrlOrId: prUrl, action });
       if (!res?.ok) {
@@ -1349,13 +1412,17 @@ useEffect(() => {
                               </>
                             )}
 
-                            <button className="btn success" onClick={() => performPRAction("accept")} style={{ fontSize: 13, height: 36, padding: '0 14px' }}>
-                              ✓ Accept Pull Request
-                            </button>
+                            {isAcceptEnabled && (
+                              <button className="btn success" onClick={() => performPRAction("accept")} style={{ fontSize: 13, height: 36, padding: '0 14px' }}>
+                                ✓ Accept Pull Request
+                              </button>
+                            )}
                             
-                            <button className="btn danger" onClick={() => performPRAction(repoType === "azure" ? "abandon" : "reject")} style={{ fontSize: 13, height: 36, padding: '0 14px' }}>
-                              ✕ {repoType === "azure" ? "Abandon" : "Reject"}
-                            </button>
+                            {isRejectEnabled && (
+                              <button className="btn danger" onClick={() => performPRAction(repoType === "azure" ? "abandon" : "reject")} style={{ fontSize: 13, height: 36, padding: '0 14px' }}>
+                                ✕ {repoType === "azure" ? "Abandon" : "Reject"}
+                              </button>
+                            )}
                           </div>
                         </>
                       )}

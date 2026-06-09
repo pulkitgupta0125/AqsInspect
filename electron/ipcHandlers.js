@@ -2147,6 +2147,195 @@ ipcMain.handle('rules:buildFromCore', async () => {
   return { ok: false, error: 'Rules generation from Core Solution is disabled.' };
 });
 
+ipcMain.handle('rules:export', async (_evt) => {
+  try {
+    const rulesStore = require('./reviewEngine/rulesStore');
+    const allRules = rulesStore.loadAllRules();
+    
+    const res = await dialog.showSaveDialog({
+      defaultPath: 'aqs-rules-export.json',
+      filters: [
+        { name: 'JSON Rules', extensions: ['json'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (res.canceled) return { ok: false, error: 'cancelled' };
+    const filePath = res.filePath;
+
+    const formattedRules = allRules.map(r => {
+      const severityLower = String(r.severity || "major").toLowerCase();
+      return {
+        rule_id: r.rule_id || r.id,
+        title: r.title || "",
+        description: r.description || "",
+        layer: r.layer || (r.category === "projection" ? "Projection" : "all"),
+        category: r.category || "all",
+        subcategory: r.subcategory || "",
+        severity: severityLower,
+        approved: r.approved ?? true,
+        source: r.source || "custom",
+        pattern: r.pattern || "",
+        alertOnMissing: r.alertOnMissing ?? false,
+        classification: r.classification || "CUSTOM",
+        applicable_versions: r.applicable_versions || ["ifs_cloud"],
+        compliant_example: r.compliant_example || null,
+        non_compliant_example: r.non_compliant_example || null,
+        rationale: r.rationale || "",
+        detection_logic: r.detection_logic || {
+          method: "regex",
+          pattern: r.pattern || "",
+          file_types: r.category !== "all" ? [`.${r.category}`] : []
+        },
+        remediation: r.remediation || {
+          steps: (r.recommendation || "").split(". ").filter(Boolean),
+          estimated_effort: "trivial",
+          automated_fix_available: false
+        },
+        tags: r.tags || [],
+        related_rules: r.related_rules || [],
+        compliance_exceptions: r.compliance_exceptions || null
+      };
+    });
+
+    const exportData = {
+      _schema_version: "1.0.0",
+      _part_meta: {
+        part_number: 1,
+        total_parts: 1,
+        part_title: "Exported Ruleset",
+        categories_included: Array.from(new Set(allRules.map(r => r.category || "all"))),
+        rules_in_part: allRules.length,
+        rule_id_ranges: {}
+      },
+      _meta: {
+        title: "AQS Inspect Exported Ruleset",
+        description: "Exported ruleset from AQS Inspect static analysis dictionary",
+        version: "1.0.0",
+        last_updated: new Date().toISOString().split('T')[0],
+        total_rules_all_parts: allRules.length,
+        severity_model: {
+          blocker: "Prevents deployment. Breaks transactions, security, or upgrade safety. Threshold: 0",
+          critical: "High-risk defect requiring immediate fix. Threshold: 0, override allowed with approval",
+          major: "Standards violation affecting maintainability/performance. Threshold: 10",
+          minor: "Style/documentation issue. Threshold: 50",
+          info: "Best practice recommendation. Threshold: unlimited"
+        }
+      },
+      rules: formattedRules
+    };
+
+    fs.writeFileSync(filePath, JSON.stringify(exportData, null, 2), 'utf-8');
+    return { ok: true, path: filePath };
+  } catch (e) {
+    console.error('rules:export failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to export rules' };
+  }
+});
+
+ipcMain.handle('rules:import', async (_evt) => {
+  try {
+    const res = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [
+        { name: 'JSON Rules', extensions: ['json'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (res.canceled) return { ok: false, error: 'cancelled' };
+    const filePath = res.filePaths[0];
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const importedData = JSON.parse(content);
+
+    let rulesList = [];
+    if (importedData && Array.isArray(importedData.rules)) {
+      rulesList = importedData.rules;
+    } else if (Array.isArray(importedData)) {
+      rulesList = importedData;
+    } else if (importedData && typeof importedData === 'object') {
+      rulesList = [importedData];
+    }
+
+    const rulesStore = require('./reviewEngine/rulesStore');
+    let count = 0;
+
+    for (const rule of rulesList) {
+      const ruleId = rule.rule_id || rule.id;
+      if (ruleId && rule.title) {
+        let severity = rule.severity || "Major";
+        if (typeof severity === 'string') {
+          if (severity.toLowerCase() === 'blocker') severity = 'Blocker';
+          else if (severity.toLowerCase() === 'critical') severity = 'Critical';
+          else if (severity.toLowerCase() === 'major') severity = 'Major';
+          else if (severity.toLowerCase() === 'minor') severity = 'Minor';
+          else if (severity.toLowerCase() === 'info') severity = 'Info';
+        }
+
+        const cleanedRule = {
+          id: String(ruleId).trim(),
+          rule_id: String(ruleId).trim(),
+          category: rule.category || "all",
+          subcategory: rule.subcategory || "",
+          layer: rule.layer || "all",
+          severity: severity,
+          title: String(rule.title).trim(),
+          description: rule.description || "",
+          recommendation: rule.remediation?.steps ? rule.remediation.steps.join(". ") : (rule.recommendation || ""),
+          pattern: rule.pattern || (rule.detection_logic?.pattern || ""),
+          alertOnMissing: rule.alertOnMissing ?? false,
+          approved: rule.approved ?? true,
+          source: rule.source && typeof rule.source === 'string' ? rule.source : (rule.source?.title || "imported"),
+          classification: rule.classification || "CUSTOM",
+          applicable_versions: rule.applicable_versions || ["ifs_cloud"],
+          compliant_example: rule.compliant_example || null,
+          non_compliant_example: rule.non_compliant_example || null,
+          rationale: rule.rationale || "",
+          detection_logic: rule.detection_logic || null,
+          remediation: rule.remediation || null,
+          tags: rule.tags || [],
+          related_rules: rule.related_rules || [],
+          compliance_exceptions: rule.compliance_exceptions || null
+        };
+        rulesStore.saveRule(cleanedRule);
+        count++;
+      }
+    }
+
+    return { ok: true, count };
+  } catch (e) {
+    console.error('rules:import failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to import rules' };
+  }
+});
+
+
+ipcMain.handle('rules:delete', async (_evt, payload) => {
+  const { ruleId } = payload || {};
+  try {
+    const rulesStore = require('./reviewEngine/rulesStore');
+    rulesStore.deleteRule(ruleId);
+    return { ok: true };
+  } catch (e) {
+    console.error('rules:delete failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to delete rule' };
+  }
+});
+
+ipcMain.handle('rules:deleteAll', async (_evt) => {
+  try {
+    const rulesStore = require('./reviewEngine/rulesStore');
+    rulesStore.deleteAllRules();
+    return { ok: true };
+  } catch (e) {
+    console.error('rules:deleteAll failed:', e?.message || e);
+    return { ok: false, error: e?.message || 'Failed to delete all rules' };
+  }
+});
+
+
+
+
 // ===========================
 // User Email Fetching
 // ===========================

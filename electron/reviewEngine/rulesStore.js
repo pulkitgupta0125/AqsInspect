@@ -19,6 +19,28 @@ function ensureRulesDir() {
   }
 }
 
+const DELETED_BUILTINS_FILE = path.join(RULES_DIR, '.deleted_builtins.json');
+
+function getDeletedBuiltins() {
+  if (fs.existsSync(DELETED_BUILTINS_FILE)) {
+    try {
+      return JSON.parse(fs.readFileSync(DELETED_BUILTINS_FILE, 'utf-8')) || [];
+    } catch (e) {
+      return [];
+    }
+  }
+  return [];
+}
+
+function addDeletedBuiltin(ruleId) {
+  ensureRulesDir();
+  const list = getDeletedBuiltins();
+  if (!list.includes(ruleId)) {
+    list.push(ruleId);
+    fs.writeFileSync(DELETED_BUILTINS_FILE, JSON.stringify(list, null, 2), 'utf-8');
+  }
+}
+
 const BUILTIN_RULES = [
   {
     id: "ARCH-001",
@@ -262,8 +284,12 @@ function initializeDefaultRules() {
     }
   }
 
-  // Write new built-in rules (always overwrite so modifications apply)
+  // Write new built-in rules (always overwrite so modifications apply, unless deleted)
+  const deletedList = getDeletedBuiltins();
   for (const rule of BUILTIN_RULES) {
+    if (deletedList.includes(rule.id)) {
+      continue;
+    }
     const file = path.join(RULES_DIR, `${rule.id}.json`);
     try {
       fs.writeFileSync(file, JSON.stringify(rule, null, 2));
@@ -338,11 +364,45 @@ function disapproveAllRules() {
   return true;
 }
 
+function deleteRule(ruleId) {
+  ensureRulesDir();
+  const file = path.join(RULES_DIR, `${ruleId}.json`);
+  if (fs.existsSync(file)) {
+    fs.unlinkSync(file);
+    if (BUILTIN_RULES.some(r => r.id === ruleId)) {
+      addDeletedBuiltin(ruleId);
+    }
+    return true;
+  }
+  throw new Error(`Rule ${ruleId} not found`);
+}
+
+function deleteAllRules() {
+  ensureRulesDir();
+  const rules = loadAllRules();
+  for (const r of rules) {
+    const file = path.join(RULES_DIR, `${r.id}.json`);
+    if (fs.existsSync(file)) {
+      try {
+        fs.unlinkSync(file);
+      } catch (err) {
+        console.error(`Failed to delete rule file ${file}:`, err.message);
+      }
+    }
+    if (BUILTIN_RULES.some(br => br.id === r.id)) {
+      addDeletedBuiltin(r.id);
+    }
+  }
+  return true;
+}
+
 module.exports = {
   loadAllRules,
   saveRule,
   setRuleApproval,
   approveAllRules,
   disapproveAllRules,
+  deleteRule,
+  deleteAllRules,
   RULES_DIR
 };
