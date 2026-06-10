@@ -18,13 +18,16 @@
   },
   "dependencies": {
     "keytar": "^7.9.0",
+    "mammoth": "^1.12.0",
     "nodemailer": "^6.9.4",
+    "officeparser": "^7.2.1",
+    "pdf-parse": "^2.4.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.7.0",
     "@babel/parser": "^7.22.0",
+    "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^8.2.0",
     "cross-env": "^7.0.3",
     "electron": "^30.0.0",

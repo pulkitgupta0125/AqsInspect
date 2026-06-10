@@ -22,12 +22,13 @@ function mapAzureStatus(pr) {
 }
 
 async function listPullRequests({ filters, repoSettings }) {
-  const org = repoSettings?.org;
-  const project = repoSettings?.project;
-  const repoIdOrName = repoSettings?.repoIdOrName;
-  const pat = repoSettings?.pat;
-  const baseUrl = repoSettings?.baseUrl || "https://dev.azure.com";
-  const apiVersion = repoSettings?.apiVersion || "7.1";
+  const cleanSettings = normalizeAzureSettings(repoSettings);
+  const org = cleanSettings?.org;
+  const project = cleanSettings?.project;
+  const repoIdOrName = cleanSettings?.repoIdOrName;
+  const pat = cleanSettings?.pat;
+  const baseUrl = cleanSettings?.baseUrl || "https://dev.azure.com";
+  const apiVersion = cleanSettings?.apiVersion || "7.1";
 
   if (!org || !project || !repoIdOrName || !pat) {
     throw new Error("Azure settings are incomplete (org/project/repoIdOrName/pat required).");
@@ -105,25 +106,19 @@ async function listPullRequests({ filters, repoSettings }) {
 }
 
 async function getPullRequestDetails({ prUrlOrId, repoSettings }) {
-  const org = repoSettings?.org;
-  const project = repoSettings?.project;
-  const repoIdOrName = repoSettings?.repoIdOrName;
-  const pat = repoSettings?.pat;
-  const baseUrl = repoSettings?.baseUrl || "https://dev.azure.com";
-  const apiVersion = repoSettings?.apiVersion || "7.1";
+  const cleanSettings = normalizeAzureSettings(repoSettings);
+  const org = cleanSettings?.org;
+  const project = cleanSettings?.project;
+  const repoIdOrName = cleanSettings?.repoIdOrName;
+  const pat = cleanSettings?.pat;
+  const baseUrl = cleanSettings?.baseUrl || "https://dev.azure.com";
+  const apiVersion = cleanSettings?.apiVersion || "7.1";
 
   if (!org || !project || !repoIdOrName || !pat) {
     throw new Error("Azure settings are incomplete (org/project/repoIdOrName/pat required).");
   }
 
-  let prId = prUrlOrId;
-  if (typeof prUrlOrId === "string") {
-	const m =
-	  prUrlOrId.match(/pullrequest\/(\d+)/i) ||
-	  prUrlOrId.match(/[?&]pullRequestId=(\d+)/i);
-  
-    if (m) prId = m[1];
-  }
+  const prId = extractAzurePrId(prUrlOrId);
   if (!prId) throw new Error("PR id/url invalid.");
 
   const headers = { Authorization: authHeaderFromPat(pat) };
@@ -144,28 +139,99 @@ async function getPullRequestDetails({ prUrlOrId, repoSettings }) {
 
 function extractAzurePrId(prUrlOrId) {
   if (!prUrlOrId) return null;
-  let prId = prUrlOrId;
-  if (typeof prUrlOrId === "string") {
-    const m =
-      prUrlOrId.match(/pullrequest\/(\d+)/i) ||
-      prUrlOrId.match(/pullRequests\/(\d+)/i) ||
-      prUrlOrId.match(/[?&]pullRequestId=(\d+)/i);
-    if (m) prId = m[1];
+  const str = String(prUrlOrId).trim();
+  
+  if (/^\d+$/.test(str)) {
+    return str;
   }
-  return prId ? String(prId) : null;
+  
+  const m =
+    str.match(/(?:pullrequest|pullrequests)\/(\d+)/i) ||
+    str.match(/[?&](?:pullRequestId|prId|pr|id)=(\d+)(?:&|$)/i);
+  
+  if (m) {
+    return m[1];
+  }
+  
+  if (str.includes(":") || str.includes("/")) {
+    return null;
+  }
+  
+  return str;
+}
+
+function normalizeAzureSettings(settings) {
+  if (!settings) return settings;
+  const result = { ...settings };
+  
+  const fields = ["org", "project", "repoIdOrName"];
+  let urlToParse = null;
+  
+  for (const f of fields) {
+    if (result[f] && typeof result[f] === "string" && (result[f].startsWith("http://") || result[f].startsWith("https://"))) {
+      urlToParse = result[f];
+      break;
+    }
+  }
+  
+  if (urlToParse) {
+    try {
+      const { URL } = require("url");
+      const u = new URL(urlToParse);
+      const host = u.hostname.toLowerCase();
+      let org = "";
+      let project = "";
+      let repo = "";
+      
+      const pathParts = u.pathname.split("/").filter(Boolean);
+      
+      if (host === "dev.azure.com") {
+        if (pathParts.length >= 1) org = pathParts[0];
+        if (pathParts.length >= 2) project = pathParts[1];
+        const gitIdx = pathParts.indexOf("_git");
+        if (gitIdx !== -1 && pathParts.length > gitIdx + 1) {
+          repo = pathParts[gitIdx + 1];
+        } else if (pathParts.length >= 5 && pathParts[2] === "_apis" && pathParts[3] === "git" && pathParts[4] === "repositories" && pathParts.length > 5) {
+          repo = pathParts[5];
+        }
+      } else if (host.endsWith(".visualstudio.com")) {
+        org = host.split(".")[0];
+        if (pathParts.length >= 1) project = pathParts[0];
+        const gitIdx = pathParts.indexOf("_git");
+        if (gitIdx !== -1 && pathParts.length > gitIdx + 1) {
+          repo = pathParts[gitIdx + 1];
+        } else if (pathParts.length >= 4 && pathParts[1] === "_apis" && pathParts[2] === "git" && pathParts[3] === "repositories" && pathParts.length > 4) {
+          repo = pathParts[4];
+        }
+      }
+      
+      if (org) result.org = org;
+      if (project) result.project = project;
+      if (repo) result.repoIdOrName = repo;
+    } catch (e) {
+      console.warn("Failed to auto-parse Azure DevOps URL in settings:", e.message);
+    }
+  }
+  
+  if (result.org) result.org = String(result.org).trim().replace(/\/+$/, "");
+  if (result.project) result.project = String(result.project).trim().replace(/\/+$/, "");
+  if (result.repoIdOrName) result.repoIdOrName = String(result.repoIdOrName).trim().replace(/\/+$/, "");
+  if (result.baseUrl) result.baseUrl = String(result.baseUrl).trim().replace(/\/+$/, "");
+  
+  return result;
 }
 
 async function updateAzurePullRequestStatus({ prUrlOrId, repoSettings, status }) {
-  const org = repoSettings?.org;
-  const project = repoSettings?.project;
-  const repoIdOrName = repoSettings?.repoIdOrName;
-  const pat = repoSettings?.pat;
-  const baseUrl = repoSettings?.baseUrl || "https://dev.azure.com";
-  const apiVersion = repoSettings?.apiVersion || "7.1";
+  const cleanSettings = normalizeAzureSettings(repoSettings);
+  const org = cleanSettings?.org;
+  const project = cleanSettings?.project;
+  const repoIdOrName = cleanSettings?.repoIdOrName;
+  const pat = cleanSettings?.pat;
+  const baseUrl = cleanSettings?.baseUrl || "https://dev.azure.com";
+  const apiVersion = cleanSettings?.apiVersion || "7.1";
 
   if (!org || !project || !repoIdOrName || !pat) {
-    throw new Error("Azure settings are incomplete (org/project/repoIdOrName/pat required)."
-    );
+    throw new Error("Azure settings are incomplete (org/project/repoIdOrName/pat required).");
   }
 
   const prId = extractAzurePrId(prUrlOrId);
@@ -178,9 +244,8 @@ async function updateAzurePullRequestStatus({ prUrlOrId, repoSettings, status })
     "Content-Type": "application/json",
   };
 
-  // Use base URL without trailing slash and ensure clean path construction
-  const cleanBaseUrl = String(baseUrl || "https://dev.azure.com").trim().replace(/\/+$/, "");
-  const url = `${cleanBaseUrl}/${org}/${project}/_apis/git/repositories/${repoIdOrName}/pullrequests/${prId}?api-version=${apiVersion}`;
+  const cleanBaseUrl = String(baseUrl).trim().replace(/\/+$/, "");
+  const url = `${cleanBaseUrl}/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(repoIdOrName)}/pullrequests/${encodeURIComponent(prId)}?api-version=${apiVersion}`;
 
   const body = { status };
   if (status === "completed") {
@@ -201,4 +266,11 @@ async function closePullRequest({ prUrlOrId, repoSettings }) {
   return { abandoned: true, message: result?.status || "Pull request abandoned.", details: result };
 }
 
-module.exports = { listPullRequests, getPullRequestDetails, mergePullRequest, closePullRequest };
+module.exports = {
+  listPullRequests,
+  getPullRequestDetails,
+  mergePullRequest,
+  closePullRequest,
+  normalizeAzureSettings,
+  extractAzurePrId
+};

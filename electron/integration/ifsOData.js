@@ -53,6 +53,134 @@ function resolveMetadataUrls(config = {}) {
   ];
 }
 
+async function refreshIfsToken(ifsConfig) {
+  const tokenUrl = String(ifsConfig.tokenUrl || "").trim();
+  const clientId = String(ifsConfig.clientId || "").trim();
+  const clientSecret = String(ifsConfig.clientSecret || "").trim();
+  const grantType = String(ifsConfig.grantType || "").trim();
+  
+  if (!tokenUrl || !clientId || !clientSecret) {
+    throw new Error("Cannot refresh token: configuration is incomplete (tokenUrl, clientId, clientSecret required).");
+  }
+  
+  let tokenData = null;
+  
+  if (grantType === "client_credentials" || (!grantType && !ifsConfig.refreshToken)) {
+    console.log("[OData] Refreshing OAuth2 token via client_credentials...");
+    const bodyParams = {
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret
+    };
+    if (ifsConfig.scope) {
+      bodyParams.scope = ifsConfig.scope;
+    }
+    const body = new URLSearchParams(bodyParams);
+    const res = await axios.post(tokenUrl, body.toString(), {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    });
+    tokenData = res.data;
+  } else if (grantType === "refresh_token" || ifsConfig.refreshToken) {
+    console.log("[OData] Refreshing OAuth2 token via refresh_token...");
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: ifsConfig.refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret
+    });
+    const authHeaders = {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")}`
+    };
+    const res = await axios.post(tokenUrl, body.toString(), {
+      headers: authHeaders
+    });
+    tokenData = res.data;
+  } else {
+    throw new Error(`Unsupported grant type for auto-refresh: ${grantType}`);
+  }
+  
+  if (!tokenData || !tokenData.access_token) {
+    throw new Error("Token refresh response did not contain access_token.");
+  }
+  
+  try {
+    const configStore = require("../configStore");
+    const cfg = configStore.getConfig() || {};
+    cfg.oauth2 = {
+      ...cfg.oauth2,
+      accessToken: tokenData.access_token,
+      expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000
+    };
+    if (tokenData.refresh_token) {
+      cfg.oauth2.refreshToken = tokenData.refresh_token;
+    }
+    configStore.saveConfig(cfg);
+    console.log("[OData] OAuth2 token refreshed and saved successfully.");
+  } catch (storeErr) {
+    console.warn("[OData] Failed to save refreshed token to config store:", storeErr.message);
+  }
+  
+  ifsConfig.accessToken = tokenData.access_token;
+  ifsConfig.expiresAt = Date.now() + (tokenData.expires_in || 3600) * 1000;
+  if (tokenData.refresh_token) {
+    ifsConfig.refreshToken = tokenData.refresh_token;
+  }
+  
+  return tokenData.access_token;
+}
+
+async function ensureValidToken(ifsConfig) {
+  const expiresAt = ifsConfig.expiresAt || ifsConfig.expires_at;
+  if (ifsConfig.accessToken && expiresAt && expiresAt > Date.now() + 60000) {
+    return ifsConfig.accessToken;
+  }
+  return await refreshIfsToken(ifsConfig);
+}
+
+async function executeODataRequest(url, method = "GET", body = null, ifsConfig = {}) {
+  let token = ifsConfig.accessToken;
+  if (ifsConfig.tokenUrl && ifsConfig.clientId && ifsConfig.clientSecret) {
+    try {
+      token = await ensureValidToken(ifsConfig);
+    } catch (err) {
+      console.warn("[OData] Pre-request token refresh failed:", err.message);
+    }
+  }
+
+  const headers = buildHeaders({ ...ifsConfig, accessToken: token });
+  
+  const axiosConfig = {
+    method,
+    url,
+    headers,
+    timeout: 15000,
+    ...(body ? { data: body } : {})
+  };
+
+  try {
+    return await axios(axiosConfig);
+  } catch (err) {
+    if (err.response?.status === 401 && ifsConfig.tokenUrl && ifsConfig.clientId && ifsConfig.clientSecret) {
+      console.log("[OData] Request returned 401. Attempting automatic token refresh...");
+      try {
+        const refreshedToken = await refreshIfsToken(ifsConfig);
+        const retryHeaders = buildHeaders({ ...ifsConfig, accessToken: refreshedToken });
+        return await axios({
+          ...axiosConfig,
+          headers: retryHeaders
+        });
+      } catch (refreshErr) {
+        console.error("[OData] Automatic token refresh failed:", refreshErr.message);
+        throw err;
+      }
+    }
+    throw err;
+  }
+}
+
 async function fetchMetadata(config = {}) {
   const metadataUrls = resolveMetadataUrls(config);
   if (!metadataUrls.length) {
@@ -61,13 +189,8 @@ async function fetchMetadata(config = {}) {
   let lastError = null;
 
   for (const url of metadataUrls) {
-    const headers = buildHeaders(config);
-
     try {
-      const res = await axios.get(url, {
-        headers,
-        timeout: 15000
-      });
+      const res = await executeODataRequest(url, "GET", null, config);
 
       return {
         url,
@@ -78,7 +201,7 @@ async function fetchMetadata(config = {}) {
     } catch (err) {
       const error = new Error(err.message);
       error.requestUrl = url;
-      error.requestHeaders = { ...headers, Authorization: headers.Authorization ? "[REDACTED]" : undefined };
+      error.requestHeaders = { Accept: "application/json", Authorization: config.accessToken ? "[REDACTED]" : undefined };
       error.responseStatus = err.response?.status;
       error.responseData = err.response?.data;
       lastError = error;
@@ -103,19 +226,14 @@ async function fetchEntitySet(config = {}, entitySet, query = "") {
   }
 
   const url = buildUrl(config.odataUrl, `${entitySet}${query ? `?${query.replace(/^\?/, "")}` : ""}`);
-  const headers = buildHeaders(config);
   
   try {
-    const res = await axios.get(url, {
-      headers,
-      timeout: 15000
-    });
-
+    const res = await executeODataRequest(url, "GET", null, config);
     return { url, status: res.status, data: res.data };
   } catch (err) {
     const error = new Error(err.message);
     error.requestUrl = url;
-    error.requestHeaders = { ...headers, Authorization: headers.Authorization ? "[REDACTED]" : undefined };
+    error.requestHeaders = { Accept: "application/json", Authorization: config.accessToken ? "[REDACTED]" : undefined };
     error.responseStatus = err.response?.status;
     error.responseData = err.response?.data;
     throw error;
@@ -127,21 +245,19 @@ async function fetchRestResource(config = {}, resourcePath, params = {}) {
     throw new Error("REST resource path is required.");
   }
 
-  const url = buildUrl(config.restUrl, resourcePath);
-  const headers = buildHeaders(config);
+  let url = buildUrl(config.restUrl, resourcePath);
+  if (params && Object.keys(params).length > 0) {
+    const qs = new URLSearchParams(params);
+    url = `${url}?${qs.toString()}`;
+  }
   
   try {
-    const res = await axios.get(url, {
-      headers,
-      params,
-      timeout: 15000
-    });
-
+    const res = await executeODataRequest(url, "GET", null, config);
     return { url, status: res.status, data: res.data };
   } catch (err) {
     const error = new Error(err.message);
     error.requestUrl = url;
-    error.requestHeaders = { ...headers, Authorization: headers.Authorization ? "[REDACTED]" : undefined };
+    error.requestHeaders = { Accept: "application/json", Authorization: config.accessToken ? "[REDACTED]" : undefined };
     error.responseStatus = err.response?.status;
     error.responseData = err.response?.data;
     throw error;

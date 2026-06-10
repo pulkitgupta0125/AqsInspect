@@ -6,7 +6,6 @@
 module.exports = {
   fileDiscovery: require("./fileDiscovery"),
   fileClassifier: require("./fileClassifier"),
-  staticAnalyzer: require("./staticAnalyzer"),
   prompts: require("./prompts"),
   orchestrator: require("./orchestrator")
 };

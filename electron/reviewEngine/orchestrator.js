@@ -9,74 +9,20 @@ const path = require("path");
 const { promisify } = require("util");
 const fileDiscovery = require("./fileDiscovery");
 const fileClassifier = require("./fileClassifier");
-const staticAnalyzer = require("./staticAnalyzer");
+
 const ruleEngine = require("./ruleEngine");
 const agents = require("./agents");
+const configStore = require("../configStore");
+const { normalizeSeverity } = require("./severityHelper");
 
 const readfileAsync = promisify(fs.readFile);
 
-// Cache structure: { filePath: { hash, review } }
-const reviewCache = {};
-
-function hashContent(content) {
-  let hash = 0;
-  for (let i = 0; i < content.length; i++) {
-    const char = content.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash;
-  }
-  return hash.toString(36);
-}
+// No local reviewCache or hashContent needed anymore
 
 function getClassificationFallback(finding) {
   if (finding.classification && ["IFS_AQS", "ORACLE", "IFS_ERP"].includes(finding.classification)) {
     return finding.classification;
   }
-  const ruleId = String(finding.ruleId || "").toUpperCase();
-  const title = String(finding.title || "").toUpperCase();
-  const explanation = String(finding.explanation || "").toUpperCase();
-
-  if (
-    ruleId.includes("AQS") ||
-    ruleId.includes("INIT_METHOD") ||
-    ruleId.includes("TABLE_ACCESS") ||
-    ruleId.includes("CURSOR_NAMING") ||
-    ruleId.includes("COMMENT") ||
-    ruleId.includes("PLURAL") ||
-    ruleId.includes("STANDARDS") ||
-    ruleId.includes("OVERTAKE") ||
-    ruleId.includes("UPGRADE") ||
-    ruleId.includes("CDB") ||
-    title.includes("INIT_METHOD") ||
-    title.includes("NAMING CONVENTION") ||
-    title.includes("OVERTAKE") ||
-    title.includes("DOCUMENTATION") ||
-    explanation.includes("INIT_METHOD")
-  ) {
-    return "IFS_AQS";
-  }
-
-  if (
-    ruleId.includes("SYNTAX") ||
-    ruleId.includes("DML_IN_LOOP") ||
-    ruleId.includes("LOGIC_001") || 
-    ruleId.includes("LOGIC_002") || 
-    ruleId.includes("LOGIC_005") || 
-    ruleId.includes("LOGIC_006") || 
-    ruleId.includes("LOGIC_007") || 
-    title.includes("SYNTAX") ||
-    title.includes("SEMICOLON") ||
-    title.includes("BEGIN/END") ||
-    title.includes("UNCLOSED") ||
-    title.includes("PRAGMA") ||
-    title.includes("EXCEPTION") ||
-    title.includes("LOOP") ||
-    title.includes("NULL POINTER") ||
-    title.includes("CURSOR")
-  ) {
-    return "ORACLE";
-  }
-
   return "IFS_ERP";
 }
 
@@ -100,35 +46,7 @@ async function discoverAndClassifyRepo(repoRoot, maxFiles = 1000) {
   };
 }
 
-/**
- * Phase 2: Static Analysis (fast, no LLM)
- */
-async function runStaticAnalysis(files, progressCallback = null) {
-  const results = [];
-  const totalFindings = [];
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-
-    if (progressCallback) {
-      progressCallback({
-        phase: "static",
-        processed: i + 1,
-        total: files.length,
-        currentFile: file.path
-      });
-    }
-
-    const result = await staticAnalyzer.staticAnalyzeFile(file);
-    results.push(result);
-
-    if (result.findings && result.findings.length > 0) {
-      totalFindings.push(...result.findings.map((f) => ({ ...f, file })));
-    }
-  }
-
-  return { results, findings: totalFindings };
-}
 
 async function runRuleAnalysis(files, progressCallback = null) {
   const results = [];
@@ -190,16 +108,6 @@ async function prepareLLMReviewBatch(
 
       try {
         const content = await readfileAsync(file.fullPath, "utf-8");
-        const hash = hashContent(content);
-
-        if (reviewCache[file.path] && reviewCache[file.path].hash === hash) {
-          findings.push({
-            file,
-            findings: reviewCache[file.path].review.findings,
-            cached: true
-          });
-          continue;
-        }
 
         if (file.size > 15 * 1024) {
           findings.push({
@@ -227,16 +135,11 @@ async function prepareLLMReviewBatch(
           file
         }));
 
-        reviewCache[file.path] = {
-          hash,
-          review: { findings: fileFindings, summary: { score: 90 } }
-        };
-
         findings.push({
           file,
           findings: fileFindings,
           summary: { score: 90 },
-          cached: false
+          cached: agentResult.cached || false
         });
       } catch (e) {
         errors.push({ file, error: e.message });
@@ -253,62 +156,7 @@ async function prepareLLMReviewBatch(
 function generateReport(staticFindings, llmFindings, ruleFindings, repoStats) {
   const allFindings = [];
 
-  function normalizeSeverity(finding) {
-    if (!finding) return "Info";
-    const raw = String(finding.severity || finding.level || "").toLowerCase();
-    const map = {
-      blocker: "Blocker",
-      critical: "Blocker",
-      high: "Blocker",
-      major: "Major",
-      medium: "Major",
-      minor: "Minor",
-      low: "Minor",
-      info: "Info",
-      informational: "Info"
-    };
 
-    let norm = map[raw] || (raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "Info");
-
-    const text = `${finding.title || ""} ${finding.explanation || ""} ${finding.matchText || ""}`.toLowerCase();
-    const criticalKeywords = [
-      "divide by zero",
-      "division by zero",
-      "null pointer",
-      "nullreference",
-      "null reference",
-      "runtime error",
-      "uncaught exception",
-      "syntax error",
-      "missing cdb",
-      "missing cdb file",
-      "missing cdb artifact",
-      "stack overflow",
-      "segmentation fault"
-    ];
-
-    for (const kw of criticalKeywords) {
-      if (text.includes(kw)) {
-        norm = "Blocker";
-        break;
-      }
-    }
-
-    return norm;
-  }
-
-  // Merge static findings
-  for (const staticResult of staticFindings.results || []) {
-    if (staticResult.findings) {
-      allFindings.push(
-        ...staticResult.findings.map((f) => ({
-          ...f,
-          source: "static",
-          file: staticResult.file
-        }))
-      );
-    }
-  }
 
   // Merge LLM findings
   for (const llmResult of llmFindings.findings || []) {
@@ -458,28 +306,25 @@ async function reviewRepository(repoRoot, options = {}) {
       });
     }
 
-    if (progressCallback) {
-      progressCallback({ phase: "static", status: "starting" });
-    }
-    const staticResults = await runStaticAnalysis(
-      repo.allFiles,
-      progressCallback
-    );
+    const cfg = configStore.getConfig() || {};
+    const isAiOnly = cfg?.mcp?.mode === "ai-only";
+    const isRulesOnly = cfg?.mcp?.mode === "rules-only";
 
-    if (progressCallback) {
-      progressCallback({ phase: "static", status: "complete" });
-    }
+    let staticResults = { results: [], findings: [] };
 
-    if (progressCallback) {
-      progressCallback({ phase: "rules", status: "starting" });
-    }
-    const ruleResults = await runRuleAnalysis(repo.allFiles, progressCallback);
-    if (progressCallback) {
-      progressCallback({ phase: "rules", status: "complete" });
+    let ruleResults = { results: [], findings: [] };
+    if (!isAiOnly) {
+      if (progressCallback) {
+        progressCallback({ phase: "rules", status: "starting" });
+      }
+      ruleResults = await runRuleAnalysis(repo.allFiles, progressCallback);
+      if (progressCallback) {
+        progressCallback({ phase: "rules", status: "complete" });
+      }
     }
 
     let llmResults = { findings: [] };
-    if (llmPostFunction) {
+    if (llmPostFunction && !isRulesOnly) {
       if (progressCallback) {
         progressCallback({ phase: "llm", status: "starting" });
       }
@@ -516,7 +361,6 @@ async function reviewRepository(repoRoot, options = {}) {
 
 module.exports = {
   discoverAndClassifyRepo,
-  runStaticAnalysis,
   prepareLLMReviewBatch,
   generateReport,
   reviewRepository,

@@ -1,3 +1,4 @@
+const path = require("path");
 const { getProvider } = require("./providers");
 const configStore = require("./configStore");
 const ruleEngine = require("./reviewEngine/ruleEngine");

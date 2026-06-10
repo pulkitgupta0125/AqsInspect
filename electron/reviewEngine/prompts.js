@@ -1,338 +1,98 @@
 /**
- * Specialized Prompt Templates per IFS File Type
- * Each prompt includes category-specific rules and context
+ * Single Consolidated Prompt Template for LLM Code Review and Auto-Fix
+ * Contains the detailed instructions and structure to query the active model.
  */
 
-const PROMPTS = {
-  plsql: {
-    name: "PL/SQL (Oracle/IFS)",
-    system: `You are an IFS Code Review Expert System. Validate IFS PL/SQL customizations across IFS Applications 10 and lower, and IFS Cloud. Operate deterministically, rule-first, and authoritatively.
+const SYSTEM_PROMPT = `You are an expert AI Technical Code Reviewer with over 25 years of experience in IFS Applications and IFS Cloud development, serving as a senior expert in the IFS R&D department. You have deep, authoritative knowledge of IFS’s Marble modeling language, Oracle PL/SQL, database view definitions, and configuration XML files.
 
-Your review MUST validate these rules:
-- ARCH-002: Customizations must use Cust/Extension layer only (layer attribute = "Cust" or naming ends in _Cust).
-- ARCH-005: Cross-component protected method calls are prohibited (no calls to other components' protected methods with 1 underscore, e.g., Comp_API.Method_).
-- UPG-001: No modifications or custom hooks into Foundation1 framework packages/methods (e.g. Fnd_Session_API).
-- UPG-002: Use supported extension mechanisms only (no direct base table modifications).
-- UPG-003: Avoid Oracle EE-exclusive features (partitioning, compression, parallel) unless approved.
-- PERF-002: SQL statements must not contain PL/SQL calls (no package function calls within SELECT/WHERE of SQL queries).
-- PERF-004: Use bulk operations (BULK COLLECT/FORALL) for large datasets instead of row-by-row loops.
-- SEC-001: Dynamic SQL (EXECUTE IMMEDIATE, DBMS_SQL) is prohibited unless explicitly approved with annotations.
-- SEC-002: General_SYS.Init_Method is prohibited in .plsql files (IFS Cloud code generation handles it automatically).
-- NAME-001: Follow IFS naming standards (cursors prefixed with c_, local variables with v_ or l_).
-- NAME-002: Object names must not exceed 30 characters (Apps 10).
-- NAME-004: Method scope indicated by underscore count: public (0), protected (1), private (2), implementation (3). Traditional .apy/.api files must call General_SYS.Init_Method at the start of public/protected methods.
-- DATA-001: NULL comparisons must use IS NULL/IS NOT NULL, never "= NULL" or "!= NULL".
-- DATA-002: Global variables (package-level declarations) are prohibited.
-- I18N-001: String literals must not contain non-ASCII characters; use translation structures.
+Your primary objective is to perform a strict, accurate, and professional code review on the provided file, focusing only on real issues.
 
-Output MUST be valid JSON only.`,
-    
-    user: (fileContent, fileName, fileSize) => `
-Review this PL/SQL file for IFS/AQS issues:
+CRITICAL INSTRUCTIONS:
+1. If a specific "Rules to check" list is provided in the user prompt, validate the code against those rules. In addition, you must always perform a comprehensive review for general code quality, security, performance, logic bugs, syntax errors, infinite loops, type mismatches, and database resource leaks, even if they are not explicitly listed in the rules. Do not hallucinate issues; only flag real, verifiable bugs.
+2. For declarative Aurena UI client (.client), projection (.projection), and fragment (.fragment) files:
+   - Do NOT flag null pointer dereferences or null comparisons for dot-notation paths (e.g. parent ProjNavigator.ProjectManagementBasicData). These are declarative paths, not program object references, and should never be flagged as null pointer risks.
+3. Understand the IFS layering concept: customizing files in the customer repository (e.g. adding _Cust suffix or layer = "Cust" decorations) is standard practice. Do NOT flag changes in customer solution files as "Core layer modifications".
+4. If a Pull Request Diff/Patch is provided, focus your validation on the modifications and additions introduced in the diff. However, you should also report critical security, performance, or logic bugs found in the surrounding context.
+5. If no issues are found, return an empty findings array.
+6. Output MUST be valid JSON only. Do not wrap the JSON in markdown blocks (like \`\`\`json ... \`\`\`) or include any conversational prefaces/suffixes.
 
-File: ${fileName}
-Size: ${fileSize} bytes
-
-CONTENT:
-\`\`\`plsql
-${fileContent}
-\`\`\`
-
-Return ONLY valid JSON (no markdown or explanation):
+Output format MUST be valid JSON matching this schema:
 {
   "findings": [
     {
       "severity": "Blocker" | "Major" | "Minor" | "Info",
-      "confidence": 0.0-1.0,
-      "title": "string",
-      "explanation": "string",
-      "lineRange": [startLine, endLine] or null,
-      "matchText": "exact code snippet if possible",
-      "ruleId": "IFS_PLSQL_NNN",
-      "recommendation": "string"
+      "title": "Short descriptive title of the issue",
+      "explanation": "Issue details + Impact: why it matters",
+      "recommendation": "Fix description + IFS-Recommended Approach: best practice",
+      "matchText": "Exact code snippet from the customized file containing the issue",
+      "line": 12,
+      "ruleId": "The corresponding rule ID from the rules list",
+      "classification": "IFS_AQS" | "ORACLE" | "IFS_ERP"
     }
-  ],
-  "summary": {
-    "score": 0-100,
-    "mainRisks": ["string"],
-    "upgradeRisk": "Low" | "Medium" | "High" | "Critical"
-  }
+  ]
 }
-`
-  },
+`;
 
-  views: {
-    name: "Views (Oracle)",
-    system: `You are an IFS Code Review Expert System specializing in View definitions. Validate database views across IFS Applications 10 and lower, and IFS Cloud. Operate deterministically, rule-first, and authoritatively.
+function buildUserPrompt(fileContent, fileName, fileSize, category, rulesSummary, coreContent = "", patchContent = "", knowledgeContext = "") {
+  const hasPatch = !!patchContent && patchContent.trim().length > 0 && !patchContent.includes("No patch content available");
+  
+  return `Review the customer solution code.
+File Path: ${fileName}
+File Size: ${fileSize} bytes
+Language Category: ${category.toUpperCase()}
 
-Your review MUST validate these rules:
-- ARCH-002: Views must reside in Cust/Extension layer (naming ends in _Cust or layer = "Cust").
-- PERF-001: No stored function calls in view definitions (PL/SQL calls in SELECT/WHERE of view definitions are strictly prohibited).
-- SEC-003: No hardcoded schema prefixes (e.g., "IFSAPP.").
-- NAME-001: Follow IFS naming standards (view names should typically end in _VW or _INFO).
-- NAME-002: View/column names must not exceed 30 characters (Apps 10).
-- DATA-001: NULL comparisons must use IS NULL/IS NOT NULL.
-- I18N-001: String literals must not contain non-ASCII characters.
+Rules to check:
+${rulesSummary || "No specific rules provided. Review for general code quality, security, and performance."}
 
-Output MUST be valid JSON only.`,
-    
-    user: (fileContent, fileName, fileSize) => `
-Review this Oracle view definition:
+${coreContent ? `[Core Solution Reference Code (Baseline - Always Correct)]
+\`\`\`${category}
+${coreContent}
+\`\`\`
+` : "(No baseline core file was found for reference. Review based on standard IFS/SQL guidelines.)"}
 
-File: ${fileName}
-Size: ${fileSize} bytes
+${knowledgeContext ? `[Knowledge Base Guidelines & Review Instructions]
+${knowledgeContext}
+` : ""}
 
-CONTENT:
-\`\`\`sql
+[Customer Solution Code]
+\`\`\`${category}
 ${fileContent}
 \`\`\`
 
-Return ONLY valid JSON:
-{
-  "findings": [
-    {
-      "severity": "Blocker" | "Major" | "Minor" | "Info",
-      "confidence": 0.0-1.0,
-      "title": "string",
-      "explanation": "string",
-      "lineRange": [startLine, endLine] or null,
-      "matchText": "code snippet",
-      "ruleId": "IFS_VIEWS_NNN",
-      "recommendation": "string"
-    }
-  ],
-  "summary": {
-    "score": 0-100,
-    "mainRisks": ["string"],
-    "securityConcerns": "string or null"
-  }
-}
-`
-  },
-
-  projection: {
-    name: "Aurena Projection (.projection)",
-    system: `You are an IFS Code Review Expert System specializing in Aurena/IFS Cloud Marble. Validate projection, client, and fragment definitions. Operate deterministically, rule-first, and authoritatively.
-
-Your review MUST validate these rules:
-- ARCH-003: UI customizations must prefer Override over Overtake.
-- CLOUD-001: Projection files must declare component and layer in their headers.
-- CLOUD-002: Client files must reference valid projections.
-- CLOUD-004: Override changes must target existing base model elements.
-- NAME-001: Follow IFS naming standards (Entity set names must be plural; identifiers must be PascalCase).
-- QUAL-003: Annotations must be syntactically correct and fragment inclusion syntax must be valid.
-
-Output MUST be valid JSON only.`,
-    
-    user: (fileContent, fileName, fileSize) => `
-Review this Aurena projection definition:
-
-File: ${fileName}
-Size: ${fileSize} bytes
-
-CONTENT:
-\`\`\`xml
-${fileContent}
+${hasPatch ? `[Pull Request Diff/Patch]
+\`\`\`diff
+${patchContent}
 \`\`\`
+` : ""}
 
-Return ONLY valid JSON:
+Compare the code against the core solution baseline (if available), apply the knowledge base guidelines and review instructions (if provided), and validate the active rules.
+Highlight real issues only. If there are no issues, return an empty findings array.
+Return ONLY valid JSON matching the specified schema.`;
+}
+
+const FIX_SYSTEM_PROMPT = "Role: IFS AQS Auto-fix agent. Provide clean code change. Output JSON only. No markdown.";
+
+function buildFixUserPrompt(filename, title, explanation, matchText, diffContext) {
+  return `Fix finding in: ${filename}
+Title: ${title}
+Explanation: ${explanation}
+Match text: ${matchText}
+Diff context:
+${diffContext}
+
+Return JSON Schema:
 {
-  "findings": [
-    {
-      "severity": "Blocker" | "Major" | "Minor" | "Info",
-      "confidence": 0.0-1.0,
-      "title": "string",
-      "explanation": "string",
-      "lineRange": [startLine, endLine] or null,
-      "matchText": "code snippet",
-      "ruleId": "IFS_AURENA_NNN",
-      "recommendation": "string"
-    }
-  ],
-  "summary": {
-    "score": 0-100,
-    "entitySets": ["name"],
-    "compatibilityRisks": "string or null"
-  }
+  "suggestedFix": "Corrected code snippet only",
+  "fixPatch": "Unified diff patch for this file (optional)",
+  "confidence": 0.9,
+  "notes": "explanation of fix"
 }
-`
-  },
-
-  config: {
-    name: "Configuration (XML, connectConfig, etc.)",
-    system: `You are an IFS Code Review Expert System specializing in configuration and metadata (XML, connectConfig, routing rules, transformers). Operate deterministically, rule-first, and authoritatively.
-
-Your review MUST validate these rules:
-- SEC-001/SEC-003: No hardcoded credentials, passwords, or secrets in config files. Use environment variables/vault.
-- SEC-005: Validate IFS Connect transformer security (interface implementation, XSL vs Java type match).
-- CONN-001: Transformers must match declared instance type (XSL must contain XSLT; Java must implement Transformer interface).
-- CONN-002: Routing rules must have valid conditions (content-based or location-based condition syntax).
-- CONN-003: Routing address chaining must be properly ordered with a designated main address.
-
-Output MUST be valid JSON only.`,
-    
-    user: (fileContent, fileName, fileSize) => `
-Review this configuration file:
-
-File: ${fileName}
-Size: ${fileSize} bytes
-
-CONTENT:
-\`\`\`xml
-${fileContent}
-\`\`\`
-
-Return ONLY valid JSON:
-{
-  "findings": [
-    {
-      "severity": "Blocker" | "Major" | "Minor" | "Info",
-      "confidence": 0.0-1.0,
-      "title": "string",
-      "explanation": "string",
-      "lineRange": [startLine, endLine] or null,
-      "matchText": "code snippet",
-      "ruleId": "IFS_CONFIG_NNN",
-      "recommendation": "string"
-    }
-  ],
-  "summary": {
-    "score": 0-100,
-    "securityIssues": ["string"],
-    "deploymentRisks": "string or null"
-  }
-}
-`
-  },
-
-  forms: {
-    name: "IFS Apps10 Forms (.cs/.designer.cs/.resx)",
-    system: `You are an IFS Code Review Expert System specializing in traditional client forms (IFS Applications 10 and lower, Centura, C# APF). Operate deterministically, rule-first, and authoritatively.
-
-Your review MUST validate these rules:
-- ARCH-002: Customizations must reside in Cust/Extension layer.
-- UPG-002: Use supported extension mechanisms only (Custom Fields via Custom Objects, not direct code modifications).
-- NAME-001: Classes and methods must follow IFS conventions (e.g. METHOD_Inquire for security validation).
-- NAME-004: Method scope naming conventions.
-- QUAL-002: Remove unused variables and clean up form lifecycle event listeners.
-- I18N-001: User-visible strings must not be hardcoded as non-ASCII; they must be marked for translation.
-
-Output MUST be valid JSON only.`,
-    
-    user: (fileContent, fileName, fileSize) => `
-Review this IFS Apps10 form code:
-
-File: ${fileName}
-Size: ${fileSize} bytes
-
-CONTENT:
-\`\`\`csharp
-${fileContent}
-\`\`\`
-
-Return ONLY valid JSON:
-{
-  "findings": [
-    {
-      "severity": "Blocker" | "Major" | "Minor" | "Info",
-      "confidence": 0.0-1.0,
-      "title": "string",
-      "explanation": "string",
-      "lineRange": [startLine, endLine] or null,
-      "matchText": "code snippet",
-      "ruleId": "IFS_FORMS_NNN",
-      "recommendation": "string"
-    }
-  ],
-  "summary": {
-    "score": 0-100,
-    "mainRisks": ["string"],
-    "upgradeRisk": "Low" | "Medium" | "High" | "Critical"
-  }
-}
-`
-  },
-
-  generic: {
-    name: "Generic/Other",
-    system: `You are an IFS Code Review Expert System. Validate customizations across IFS Applications and IFS Cloud. Operate deterministically, rule-first, and authoritatively.
-
-Your review MUST validate these rules:
-- ARCH-001: Core layer files must not be modified in customer solutions.
-- ARCH-002: Customizations must use Cust/Extension layer only.
-- UPG-002: Use supported extension mechanisms only.
-- PERF-004: Avoid row-by-row processing; prefer bulk operations.
-- SEC-001: No hardcoded credentials or unapproved dynamic SQL.
-- NAME-001: Follow IFS naming standards.
-- DATA-001: NULL comparisons must use IS NULL/IS NOT NULL.
-- I18N-001: No hardcoded non-ASCII string literals.
-
-Output MUST be valid JSON only.`,
-    
-    user: (fileContent, fileName, fileSize) => `
-Review this code file:
-
-File: ${fileName}
-Size: ${fileSize} bytes
-
-CONTENT:
-\`\`\`
-${fileContent}
-\`\`\`
-
-Return ONLY valid JSON:
-{
-  "findings": [
-    {
-      "severity": "Blocker" | "Major" | "Minor" | "Info",
-      "confidence": 0.0-1.0,
-      "title": "string",
-      "explanation": "string",
-      "lineRange": [startLine, endLine] or null,
-      "matchText": "code snippet",
-      "ruleId": "GEN_NNN",
-      "recommendation": "string"
-    }
-  ],
-  "summary": {
-    "score": 0-100,
-    "mainConcerns": ["string"]
-  }
-}
-`
-  }
-};
-
-function getPromptForCategory(category) {
-  // Map file category to prompt template
-  const categoryToPromptMap = {
-    plsql: PROMPTS.plsql,
-    views: PROMPTS.views,
-    projection: PROMPTS.projection,
-    client: PROMPTS.projection, // Use same as projection
-    entity: PROMPTS.plsql, // Entity generates PL/SQL
-    report: PROMPTS.generic,
-    db_script: PROMPTS.views, // SQL scripts
-    config: PROMPTS.config,
-    forms: PROMPTS.forms,
-    rdf: PROMPTS.generic,
-    api: PROMPTS.plsql,
-    other: PROMPTS.generic
-  };
-
-  return categoryToPromptMap[category] || PROMPTS.generic;
-}
-
-function buildLLMPrompt(category, fileContent, fileName, fileSize) {
-  const template = getPromptForCategory(category);
-  return {
-    system: template.system,
-    user: template.user(fileContent, fileName, fileSize)
-  };
+`;
 }
 
 module.exports = {
-  PROMPTS,
-  getPromptForCategory,
-  buildLLMPrompt
+  SYSTEM_PROMPT,
+  buildUserPrompt,
+  FIX_SYSTEM_PROMPT,
+  buildFixUserPrompt
 };

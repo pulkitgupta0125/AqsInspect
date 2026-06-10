@@ -1,0 +1,51 @@
+[
+  {
+    "filePath": "test.plsql",
+    "codeSnippet": "SET SERVEROUTPUT ON;\n\nDECLARE\n    -- Cursor to find active customers\n    CURSOR c_customers IS \n        SELECT customer_id, balance FROM customers WHERE status = 'ACTIVE';\n        \n    v_cust_id      NUMBER;\n    v_cust_balance VARCHAR2(100); -- BUG 1: Why is this a string for a math operation?\n    v_bonus_amount NUMBER;\nBEGIN\n    OPEN c_customers;\n    \n    LOOP\n        FETCH c_customers INTO v_cust_id, v_cust_balance;\n        \n        -- Calculate 5% bonus\n        v_bonus_amount := v_cust_balance * 0.05;\n\n        UPDATE customers \n        SET balance = balance + v_bonus_amount\n        WHERE customer_id = v_cust_id;\n\n        -- BUG 2: Where is the exit condition?\n        DBMS_OUTPUT.PUT_LINE('Processed ID: ' || v_cust_id);\n    END LOOP;\n\n    CLOSE c_customers;\n    COMMIT;\n    \nEXCEPTION\n    WHEN OTHERS THEN\n        IF c_customers%ISOPEN THEN\n            CLOSE c_customers;\n        END IF;\n        ROLLBACK;\n        DBMS_OUTPUT.PUT_LINE('Error: ' || SQLERRM);\nEND;\n/",
+    "findings": [
+      {
+        "title": "Incorrect data type for customer balance",
+        "severity": "Blocker",
+        "explanation": "The variable v_cust_balance is declared as VARCHAR2, which is inappropriate for mathematical operations. This can lead to runtime errors or unexpected behavior when performing arithmetic calculations.",
+        "recommendation": "Change the data type of v_cust_balance to NUMBER to ensure proper calculations. IFS-Recommended Approach: Always use appropriate data types for variables based on their intended use.",
+        "ruleId": "IFS_AQS"
+      },
+      {
+        "title": "Missing exit condition in loop",
+        "severity": "Blocker",
+        "explanation": "The loop does not have an exit condition, which can lead to an infinite loop if the cursor fetches no rows. This can cause the database session to hang and consume resources indefinitely.",
+        "recommendation": "Add an exit condition to the loop, such as checking for the NOT FOUND condition after the FETCH statement. IFS-Recommended Approach: Always ensure loops have a clear exit condition to prevent infinite loops.",
+        "ruleId": "IFS_AQS"
+      }
+    ],
+    "timestamp": "2026-06-10T12:51:12.753Z"
+  },
+  {
+    "filePath": "test.plsql",
+    "codeSnippet": "DECLARE\n    CURSOR c_customers IS SELECT * FROM customers;\nBEGIN\n    NULL;\nEND;",
+    "findings": [
+      {
+        "title": "Trigger on SELECT *",
+        "severity": "Major",
+        "explanation": "Do not use SELECT *",
+        "recommendation": "List columns explicitly.",
+        "ruleId": "RULE-TEST-001"
+      }
+    ],
+    "timestamp": "2026-06-10T12:24:10.065Z"
+  },
+  {
+    "filePath": "PurchaseOrderApproval-Cust.plsql",
+    "codeSnippet": "\n      layer Cust;\n      \n      @Override\n      PROCEDURE Check_Insert___ (\n         newrec_ IN OUT purchase_order_approval_tab%ROWTYPE,\n         indrec_ IN OUT Indicator_Rec,\n         attr_   IN OUT VARCHAR2 )\n      IS\n         my_new_field VARCHAR2(100); -- Violated: should use 'C' prefix\n      BEGIN\n         super(newrec_, indrec_, attr_);\n      END Check_Insert___;\n    ",
+    "findings": [
+      {
+        "title": "Missing 'C' Prefix for Custom Field",
+        "severity": "Blocker",
+        "explanation": "The variable 'my_new_field' does not adhere to the naming convention requiring a 'C' prefix for custom fields. This can lead to naming collisions with future IFS Core objects, potentially causing build failures.",
+        "recommendation": "Rename 'my_new_field' to 'CMy_New_Field' to comply with IFS naming standards and prevent namespace collisions.",
+        "ruleId": "Naming Standards"
+      }
+    ],
+    "timestamp": "2026-06-10T13:27:04.049Z"
+  }
+]

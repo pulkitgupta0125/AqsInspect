@@ -42,6 +42,13 @@ export default function SettingsScreen({ onBack }) {
     temperature: 0.2
   });
 
+  // Hybrid settings states
+  const [premiumProvider, setPremiumProvider] = useState("azure");
+  const [hybridMaxLines, setHybridMaxLines] = useState(300);
+  const [hybridMaxFiles, setHybridMaxFiles] = useState(1);
+  const [hybridCheckSql, setHybridCheckSql] = useState(true);
+
+
   const [openaiModels, setOpenaiModels] = useState(["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]);
   const [ollamaModels, setOllamaModels] = useState(["llama3", "mistral", "codellama", "phi3"]);
   const [detectingOpenai, setDetectingOpenai] = useState(false);
@@ -89,7 +96,10 @@ export default function SettingsScreen({ onBack }) {
 
   const [mcp, setMcp] = useState({
     mode: "hybrid",
-    enableImpactAnalysis: true
+    enableImpactAnalysis: true,
+    useCoreReference: true,
+    enableKnowledgeBase: false,
+    knowledgePath: ""
   });
 
   const [repoStatus, setRepoStatus] = useState(null);
@@ -185,6 +195,12 @@ export default function SettingsScreen({ onBack }) {
             setOllamaModels(prev => [...prev.filter(m => m !== ollamaData.model), ollamaData.model]);
           }
 
+          // Hybrid settings
+          setPremiumProvider(rootLlm.premiumProvider || "azure");
+          setHybridMaxLines(rootLlm.hybridMaxLines ?? 300);
+          setHybridMaxFiles(rootLlm.hybridMaxFiles ?? 1);
+          setHybridCheckSql(rootLlm.hybridCheckSql ?? true);
+
           setProvider(activeProv);
         }
 
@@ -228,7 +244,10 @@ export default function SettingsScreen({ onBack }) {
 
         setMcp({
           mode: cfg?.mcp?.mode || "hybrid",
-          enableImpactAnalysis: cfg?.mcp?.enableImpactAnalysis !== false
+          enableImpactAnalysis: cfg?.mcp?.enableImpactAnalysis !== false,
+          useCoreReference: cfg?.mcp?.useCoreReference !== false,
+          enableKnowledgeBase: cfg?.mcp?.enableKnowledgeBase || false,
+          knowledgePath: cfg?.mcp?.knowledgePath || ""
         });
       } catch (err) {
         console.error("Failed to load config", err);
@@ -802,7 +821,11 @@ export default function SettingsScreen({ onBack }) {
 
         llm: {
           provider,
-          ...(provider === "azure" ? azureLlm : provider === "openai" ? openaiLlm : ollamaLlm),
+          premiumProvider,
+          hybridMaxLines: Number(hybridMaxLines),
+          hybridMaxFiles: Number(hybridMaxFiles),
+          hybridCheckSql,
+          ...(provider === "azure" ? azureLlm : provider === "openai" ? openaiLlm : provider === "ollama" ? ollamaLlm : {}),
           providers: {
             azure: azureLlm,
             openai: openaiLlm,
@@ -1967,6 +1990,44 @@ export default function SettingsScreen({ onBack }) {
                   />
                   <label htmlFor="impactAnalysis" style={{ fontSize: '13px', cursor: 'pointer', userSelect: 'none' }}>Enable PR → ERP metadata dependencies & impact analysis</label>
                 </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
+                  <input
+                    type="checkbox"
+                    id="useCoreReference"
+                    checked={mcp.useCoreReference}
+                    onChange={(e) => setMcp({ ...mcp, useCoreReference: e.target.checked })}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <label htmlFor="useCoreReference" style={{ fontSize: '13px', cursor: 'pointer', userSelect: 'none' }}>Intelligently use Core Solution files as reference standard / source of truth</label>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
+                  <input
+                    type="checkbox"
+                    id="enableKnowledgeBase"
+                    checked={mcp.enableKnowledgeBase}
+                    onChange={(e) => setMcp({ ...mcp, enableKnowledgeBase: e.target.checked })}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <label htmlFor="enableKnowledgeBase" style={{ fontSize: '13px', cursor: 'pointer', userSelect: 'none' }}>Enable Knowledge Base guidelines & review instructions</label>
+                </div>
+
+                {mcp.enableKnowledgeBase && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginLeft: '24px', marginTop: '4px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Knowledge Path</label>
+                    <input
+                      className="input"
+                      placeholder="e.g. C:\IFS\KnowledgeBase"
+                      value={mcp.knowledgePath || ""}
+                      onChange={(e) => setMcp({ ...mcp, knowledgePath: e.target.value })}
+                      style={{ width: '100%', maxWidth: '500px' }}
+                    />
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      Folder containing guidelines, checklist documents (PDF, Word, TXT, MD) to align review findings.
+                    </div>
+                  </div>
+                )}
 
                 <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
                   <button onClick={refreshMCPStatus} className="btn">📡 Refresh MCP Status</button>

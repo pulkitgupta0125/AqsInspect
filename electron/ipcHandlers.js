@@ -133,6 +133,7 @@ function getLLMConfigSafe() {
 }
 
 function validateLLM(llm) {
+  if (!llm) return "LLM configuration is missing";
   const provider = (llm.provider || "azure").toLowerCase();
 
   if (provider === "ollama") {
@@ -141,7 +142,7 @@ function validateLLM(llm) {
     return null;
   }
 
-  if (!llm?.apiKey) return "API key is missing";
+  if (!llm.apiKey) return "API key is missing";
 
   if (provider === "azure") {
     if (!llm.endpoint) return "Azure endpoint is missing";
@@ -294,7 +295,8 @@ ipcMain.handle("github:verify", async (_evt, payload) => {
 });
 
 ipcMain.handle("azure:verify", async (_evt, payload) => {
-  const a = payload?.repoSettings || {};
+  const azureProv = getProvider("azure");
+  const a = azureProv.normalizeAzureSettings ? azureProv.normalizeAzureSettings(payload?.repoSettings || {}) : (payload?.repoSettings || {});
   const org = a.org;
   const project = a.project;
   const repoIdOrName = a.repoIdOrName;
@@ -320,7 +322,7 @@ ipcMain.handle("azure:verify", async (_evt, payload) => {
       Accept: "application/json"
     };
 
-    const res = await axios.get(url, { headers });
+    const res = await axiosGetWithRetry(url, { headers });
     if (res.status === 200) {
       return { valid: true, repoName: repoIdOrName };
     }
@@ -1249,8 +1251,27 @@ function stripLeadingSlash(p) {
   return s.startsWith("/") ? s.slice(1) : s;
 }
 
+async function axiosGetWithRetry(url, config, attempts = 3, initialDelay = 500) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await axios.get(url, config);
+    } catch (e) {
+      lastError = e;
+      const isTransient = e.code === "ECONNRESET" || e.code === "ETIMEDOUT" || e.code === "EPIPE" || e.code === "ECONNREFUSED" || (e.response && (e.response.status === 429 || e.response.status >= 500));
+      if (isTransient && attempt < attempts) {
+        const delay = initialDelay * attempt;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastError;
+}
+
 async function azureGetJson(url, headers) {
-  const res = await axios.get(url, { headers });
+  const res = await axiosGetWithRetry(url, { headers });
   return res.data;
 }
 
@@ -1266,7 +1287,7 @@ async function azureGetItemText({ apiRoot, path, commitId, apiVersion, headers }
 
   const url = `${apiRoot}/items?${qs.toString()}`;
   try {
-    const res = await axios.get(url, { headers });
+    const res = await axiosGetWithRetry(url, { headers });
     const data = res.data;
     if (typeof data === "string") return data;
     if (data && typeof data.content === "string") return data.content;
@@ -1945,7 +1966,23 @@ ipcMain.handle("review:run", async (_evt, payload) => {
     consolidatedFindings.push(...(agentResult.findings || []));
   }
 
-  // Live OData ERP connected validation is disabled per user request
+  // Live OData ERP connected validation
+  try {
+    const cfg = store && typeof store.getConfig === "function" ? store.getConfig() : {};
+    const ifsConfig = { ...cfg?.ifs, ...cfg?.oauth2 };
+    if (ifsConfig.odataUrl || ifsConfig.metadataUrl) {
+      const erpFindings = await mcpServer.validatePRAgainstERP({ files }, ifsConfig);
+      consolidatedFindings.push(...erpFindings);
+    }
+  } catch (err) {
+    console.warn("Could not query live ERP for PR validation:", err.message);
+  }
+
+  // Normalize findings severity using severity helper
+  const { normalizeSeverity } = require("./reviewEngine/severityHelper");
+  consolidatedFindings.forEach(f => {
+    f.severity = normalizeSeverity(f);
+  });
 
   // Enforce 3-tier sorting: IFS_AQS -> ORACLE -> IFS_ERP
   const classificationOrder = { "IFS_AQS": 1, "ORACLE": 2, "IFS_ERP": 3 };
@@ -1964,10 +2001,10 @@ ipcMain.handle("review:run", async (_evt, payload) => {
   // Calculate score based on findings severity
   let high = 0, medium = 0, low = 0;
   consolidatedFindings.forEach(f => {
-    const sev = String(f.severity || "info").toLowerCase();
-    if (sev === "blocker" || sev === "critical" || sev === "high") high++;
-    else if (sev === "major" || sev === "warning" || sev === "medium") medium++;
-    else low++;
+    const sev = String(f.severity || "Info").toLowerCase();
+    if (sev === "blocker") high++;
+    else if (sev === "major") medium++;
+    else if (sev === "minor") low++;
   });
   const score = Math.max(0, 100 - (high * 40 + medium * 15 + low * 5));
 
@@ -2001,24 +2038,15 @@ ipcMain.handle("fix:generate", async (_evt, payload) => {
   if (!filename) throw new Error("filename is required");
   if (!filePatch && !unifiedDiff) throw new Error("No diff context provided");
 
-  const system =
-    "Role: IFS AQS Auto-fix agent. Provide clean code change. Output JSON only. No markdown.";
-
-  const user = `Fix finding in: ${filename}
-Title: ${title}
-Explanation: ${explanation}
-Match text: ${matchText}
-Diff context:
-${filePatch || unifiedDiff}
-
-Return JSON Schema:
-{
-  "suggestedFix": "Corrected code snippet only",
-  "fixPatch": "Unified diff patch for this file (optional)",
-  "confidence": 0.9,
-  "notes": "explanation of fix"
-}
-`;
+  const prompts = require("./reviewEngine/prompts");
+  const system = prompts.FIX_SYSTEM_PROMPT;
+  const user = prompts.buildFixUserPrompt(
+    filename,
+    title,
+    explanation,
+    matchText,
+    filePatch || unifiedDiff
+  );
 
   const messages = [
     { role: "system", content: system },
@@ -2026,18 +2054,20 @@ Return JSON Schema:
   ];
 
   let url, headers, body;
+  const apiVersion = llm.apiVersion || "2024-02-15-preview";
+
   if (provider === "openai") {
     url = "https://api.openai.com/v1/chat/completions";
     headers = { Authorization: `Bearer ${llm.apiKey}`, "Content-Type": "application/json" };
     body = { model: llm.model, messages, temperature };
   } else if (provider === "ollama") {
-    const endpoint = String(llm.endpoint).replace(/\/$/, "");
+    const endpoint = String(llm.endpoint || "http://localhost:11434").replace(/\/$/, "");
     url = `${endpoint}/api/chat`;
     headers = { "Content-Type": "application/json" };
     body = { model: llm.model, messages, stream: false, options: { temperature } };
   } else {
-    const endpoint = String(llm.endpoint).replace(/\/$/, "");
-    const apiVersion = llm.apiVersion || "2024-02-15-preview";
+    // Azure
+    const endpoint = String(llm.endpoint || "").replace(/\/$/, "");
     url = `${endpoint}/openai/deployments/${llm.model}/chat/completions?api-version=${apiVersion}`;
     headers = { "api-key": llm.apiKey, "Content-Type": "application/json" };
     body = { messages, temperature };
@@ -2082,9 +2112,12 @@ ipcMain.handle("review:repo", async (_evt, payload) => {
   if (!repoPath) throw new Error("repoPath is required for repository review");
 
   try {
-    // Prepare LLM function if in "full" mode
+    const cfg = store.getConfig ? store.getConfig() : {};
+    const isAiOnly = cfg?.mcp?.mode === "ai-only";
+
+    // Prepare LLM function if in "full" mode or "ai-only" Rule Engine Mode
     let llmPostFunc = null;
-    if (mode === "full") {
+    if (mode === "full" || isAiOnly) {
       const llm = getLLMConfigSafe();
       const err = validateLLM(llm);
       if (err) throw new Error(`LLM not configured: ${err}`);
@@ -2122,34 +2155,75 @@ ipcMain.handle("review:repo", async (_evt, payload) => {
 });
 
 ipcMain.handle("mcp:getStatus", async () => {
-  return { ok: true, status: "disabled" };
+  try {
+    const status = mcpServer.getStatus();
+    return { ok: true, status };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
-ipcMain.handle("mcp:analyzeImpact", async () => {
-  return {
-    ok: true,
-    result: {
-      riskLevel: "Low",
-      impactedAreas: [],
-      summary: "MCP integration is disabled."
-    }
-  };
+ipcMain.handle("mcp:analyzeImpact", async (_evt, payload) => {
+  try {
+    const cfg = store.getConfig ? store.getConfig() : {};
+    const prUrlOrId = payload?.prUrlOrId || "";
+    const repoType = (payload?.repoType || cfg?.repoType || "github").toLowerCase();
+    const repoSettings = repoType === "azure"
+      ? getAzureSettings(cfg, payload)
+      : getGithubSettings(cfg, payload);
+
+    const result = await mcpServer.analyzePullRequestImpact({
+      prUrlOrId,
+      repoType,
+      repoSettings,
+      ifsConfig: { ...cfg?.ifs, ...cfg?.oauth2 },
+      mcpConfig: cfg?.mcp
+    });
+    return { ok: true, result };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 ipcMain.handle("mcp:fetchIFSMetadata", async () => {
-  return { ok: false, error: "MCP integration is disabled." };
+  try {
+    const cfg = store.getConfig ? store.getConfig() : {};
+    const result = await mcpServer.fetchIFSMetadata({ ...cfg?.ifs, ...cfg?.oauth2 });
+    return { ok: true, metadata: result };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
-ipcMain.handle("mcp:verifyOAuth2", async () => {
-  return { ok: false, error: "MCP integration is disabled." };
+ipcMain.handle("mcp:verifyOAuth2", async (_evt, payload) => {
+  try {
+    const cfg = store.getConfig ? store.getConfig() : {};
+    const oauthConfig = { ...cfg?.oauth2, ...payload };
+    const result = await mcpServer.verifyOAuth2(oauthConfig);
+    return { ok: true, result };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
-ipcMain.handle("mcp:verifyIFSConnection", async () => {
-  return { ok: false, error: "MCP integration is disabled." };
+ipcMain.handle("mcp:verifyIFSConnection", async (_evt, payload) => {
+  try {
+    const cfg = store.getConfig ? store.getConfig() : {};
+    const ifsConfig = { ...cfg?.ifs, ...cfg?.oauth2, ...payload };
+    const result = await mcpServer.verifyIFSConnection(ifsConfig);
+    return result;
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 ipcMain.handle("mcp:getAuditTrail", async () => {
-  return { ok: true, audit: [] };
+  try {
+    const audit = require("./extensions/audit");
+    return { ok: true, audit: audit.summarizeAuditTrail({ limit: 100 }) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 // =============================// ================= Full File Content (GitHub + Azure DevOps)
@@ -2376,7 +2450,19 @@ ipcMain.handle('rules:disapproveAll', async (_evt) => {
 });
 
 ipcMain.handle('rules:buildFromCore', async () => {
-  return { ok: false, error: 'Rules generation from Core Solution is disabled.' };
+  try {
+    const { buildDynamicRulesFromIfsCore } = require('./reviewEngine/dynamicRuleBuilder');
+    const cfg = store.getConfig ? store.getConfig() : {};
+    const corePath = cfg?.ifs?.corePath || "";
+    if (!corePath) {
+      return { ok: false, error: 'IFS Core Path is not configured in Settings.' };
+    }
+    const result = buildDynamicRulesFromIfsCore(corePath);
+    return { ok: true, result };
+  } catch (e) {
+    console.error('rules:buildFromCore failed:', e.message);
+    return { ok: false, error: e.message };
+  }
 });
 
 ipcMain.handle('rules:export', async (_evt) => {
@@ -2662,12 +2748,31 @@ ipcMain.handle('user:getEmail', async (_evt, payload) => {
 // MCP Verification
 // ===========================
 ipcMain.handle('mcp:verify', async (_evt) => {
-  return {
-    ok: false,
-    status: 'disabled',
-    available: false,
-    message: '❌ MCP Server is disabled'
-  };
+  try {
+    const status = mcpServer.getStatus();
+    if (status.ready) {
+      return {
+        ok: true,
+        status: 'ready',
+        available: true,
+        message: `✅ MCP Server is ready. Repo type: ${status.repoType}`
+      };
+    } else {
+      return {
+        ok: false,
+        status: 'incomplete',
+        available: false,
+        message: '⚠️ MCP Server configuration is incomplete.'
+      };
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      status: 'error',
+      available: false,
+      message: `❌ MCP verification failed: ${err.message}`
+    };
+  }
 });
 
 ipcMain.handle("review:saveFeedback", async (_evt, payload) => {

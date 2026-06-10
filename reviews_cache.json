@@ -1,0 +1,31 @@
+{
+  "515b99c02003b7009674d227dacb2976a52575b6369a70c7a42c2b74e129df65": {
+    "review": {
+      "findings": [
+        {
+          "severity": "Blocker",
+          "title": "Missing 'C' Prefix for Custom Field",
+          "explanation": "The variable 'my_new_field' does not adhere to the naming convention requiring a 'C' prefix for custom fields. This can lead to naming collisions with future IFS Core objects, potentially causing build failures.",
+          "recommendation": "Rename 'my_new_field' to 'CMy_New_Field' to comply with IFS naming standards and prevent namespace collisions.",
+          "matchText": "my_new_field VARCHAR2(100); -- Violated: should use 'C' prefix",
+          "line": 6,
+          "ruleId": "Naming Standards",
+          "classification": "IFS_AQS"
+        }
+      ],
+      "context": {
+        "category": "plsql",
+        "detectedVersion": "IFS Cloud (Aurena/Marble)",
+        "isCloud": true,
+        "isApps10OrLower": false,
+        "lineCount": 14
+      },
+      "rules": {
+        "count": 0,
+        "summary": ""
+      },
+      "cached": false
+    },
+    "timestamp": "2026-06-10T13:27:04.048Z"
+  }
+}
