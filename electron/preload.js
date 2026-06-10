@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('api', {
   verifyGitHubToken: (token) =>
     ipcRenderer.invoke('github:verify', token),
 
+  verifyAzureConnection: (payload) =>
+    ipcRenderer.invoke('azure:verify', payload),
+
   sendEmail: (payload) => ipcRenderer.invoke('email:send', payload),
   testSMTP: (payload) => ipcRenderer.invoke('email:test', payload),
 

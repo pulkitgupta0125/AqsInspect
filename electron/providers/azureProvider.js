@@ -137,6 +137,7 @@ async function getPullRequestDetails({ prUrlOrId, repoSettings }) {
     url: pr._links?.web?.href || pr.url || "",
     createdAt: pr.creationDate,
     createdBy: pr.createdBy?.displayName || pr.createdBy?.uniqueName || "unknown",
+    creatorEmail: pr.createdBy?.uniqueName && pr.createdBy.uniqueName.includes("@") ? pr.createdBy.uniqueName : "",
     status: mapAzureStatus(pr),
   };
 }

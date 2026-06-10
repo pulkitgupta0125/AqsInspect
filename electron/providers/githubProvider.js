@@ -100,12 +100,76 @@ async function getPullRequestDetails({ prUrlOrId, repoSettings }) {
     },
   });
 
+  let creatorEmail = "";
+  const username = pr.user?.login;
+
+  // 1. Fetch user profile (public email)
+  if (username) {
+    try {
+      const userUrl = `${baseUrl}/users/${username}`;
+      const userProfile = await requestJson(userUrl, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      });
+      if (userProfile && userProfile.email) {
+        creatorEmail = userProfile.email;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch user profile for PR creator email:", err.message);
+    }
+  }
+
+  // 2. Fetch repo commits by author (guarantees email belongs to verified commits of this user)
+  if (!creatorEmail && username) {
+    try {
+      const authorCommitsUrl = `${baseUrl}/repos/${owner}/${repo}/commits?author=${encodeURIComponent(username)}&per_page=5`;
+      const authorCommits = await requestJson(authorCommitsUrl, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      });
+      if (Array.isArray(authorCommits)) {
+        const foundCommit = authorCommits.find(c => c.author?.login?.toLowerCase() === username.toLowerCase() && c.commit?.author?.email);
+        if (foundCommit) {
+          creatorEmail = foundCommit.commit.author.email;
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to fetch author commits for PR creator email:", err.message);
+    }
+  }
+
+  // 3. Check PR commits (only matching author login)
+  if (!creatorEmail && username) {
+    try {
+      const commitsUrl = `${baseUrl}/repos/${owner}/${repo}/pulls/${number}/commits`;
+      const commits = await requestJson(commitsUrl, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      });
+      if (Array.isArray(commits)) {
+        const matchingCommit = commits.find(c => c.author?.login?.toLowerCase() === username.toLowerCase() && c.commit?.author?.email);
+        if (matchingCommit) {
+          creatorEmail = matchingCommit.commit.author.email;
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to fetch commits for PR creator email:", err.message);
+    }
+  }
+
   return {
     id: String(pr.number),
     title: pr.title,
     url: pr.html_url,
     createdAt: pr.created_at,
     createdBy: pr.user?.login || "unknown",
+    creatorEmail: creatorEmail || "",
     status: pr.state === "open" ? "open" : pr.merged_at ? "merged" : "closed",
   };
 }

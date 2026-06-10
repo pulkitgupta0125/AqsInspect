@@ -12,6 +12,16 @@ export default function SettingsScreen({ onBack }) {
   const [github, setGithub] = useState({ token: "", owner: "", repo: "", baseUrl: "", enableAccept: true, enableReject: true });
   const [azure, setAzure] = useState({ org: "", project: "", repoIdOrName: "", pat: "", baseUrl: "", apiVersion: "7.1", enableAccept: true, enableReject: true });
 
+  // Multi-repository settings
+  const [multiRepo, setMultiRepo] = useState(false);
+  const [azureRepos, setAzureRepos] = useState([]);
+  const [multiRepoGithub, setMultiRepoGithub] = useState(false);
+  const [githubRepos, setGithubRepos] = useState([]);
+  const [showRepoForm, setShowRepoForm] = useState(false);
+  const [editingRepoIndex, setEditingRepoIndex] = useState(null);
+  const [repoFormType, setRepoFormType] = useState("azure"); // "azure" or "github"
+  const [tempRepo, setTempRepo] = useState({ customer: "", org: "", project: "", repoIdOrName: "", pat: "", baseUrl: "", apiVersion: "7.1", enableAccept: true, enableReject: true });
+
   // LLM settings
   const [provider, setProvider] = useState("azure");
   const [azureLlm, setAzureLlm] = useState({
@@ -74,8 +84,7 @@ export default function SettingsScreen({ onBack }) {
     user: "",
     pass: "",
     from: "",
-    to: "",
-    replyTo: ""
+    cc: ""
   });
 
   const [mcp, setMcp] = useState({
@@ -133,6 +142,11 @@ export default function SettingsScreen({ onBack }) {
           enableAccept: cfg?.azure?.enableAccept !== false,
           enableReject: cfg?.azure?.enableReject !== false
         });
+
+        setMultiRepo(cfg?.multiRepo || false);
+        setAzureRepos(cfg?.azureRepos || []);
+        setMultiRepoGithub(cfg?.multiRepoGithub || false);
+        setGithubRepos(cfg?.githubRepos || []);
 
         if (cfg?.llm) {
           const rootLlm = cfg.llm || {};
@@ -208,8 +222,8 @@ export default function SettingsScreen({ onBack }) {
           user: cfg?.email?.user || cfg?.smtp?.user || "",
           pass: cfg?.email?.pass || cfg?.smtp?.pass || "",
           from: cfg?.email?.from || cfg?.smtp?.from || "",
-          to: cfg?.email?.to || cfg?.smtp?.to || "",
-          replyTo: cfg?.email?.replyTo || cfg?.smtp?.replyTo || ""
+          cc: cfg?.email?.cc || cfg?.smtp?.cc || "",
+          disabled: cfg?.email?.disabled ?? cfg?.smtp?.disabled ?? false
         });
 
         setMcp({
@@ -244,6 +258,159 @@ export default function SettingsScreen({ onBack }) {
       }
     } catch (err) {
       setRepoStatus("❌ Connection request failed");
+    }
+  };
+
+  /* =============================
+     MULTI-REPO AZURE/GITHUB HANDLERS
+     ============================= */
+  const openRepoForm = (repo = null, index = null, type = "azure") => {
+    setRepoFormType(type);
+    if (repo) {
+      if (type === "azure") {
+        setTempRepo({
+          customer: repo.customer || "",
+          org: repo.org || "",
+          project: repo.project || "",
+          repoIdOrName: repo.repoIdOrName || "",
+          pat: repo.pat || "",
+          baseUrl: repo.baseUrl || "",
+          apiVersion: repo.apiVersion || "7.1",
+          enableAccept: repo.enableAccept !== false,
+          enableReject: repo.enableReject !== false
+        });
+      } else {
+        setTempRepo({
+          customer: repo.customer || "",
+          owner: repo.owner || "",
+          repo: repo.repo || "",
+          token: repo.token || "",
+          baseUrl: repo.baseUrl || "",
+          enableAccept: repo.enableAccept !== false,
+          enableReject: repo.enableReject !== false
+        });
+      }
+      setEditingRepoIndex(index);
+    } else {
+      if (type === "azure") {
+        setTempRepo({
+          customer: "",
+          org: "",
+          project: "",
+          repoIdOrName: "",
+          pat: "",
+          baseUrl: "",
+          apiVersion: "7.1",
+          enableAccept: true,
+          enableReject: true
+        });
+      } else {
+        setTempRepo({
+          customer: "",
+          owner: "",
+          repo: "",
+          token: "",
+          baseUrl: "",
+          enableAccept: true,
+          enableReject: true
+        });
+      }
+      setEditingRepoIndex(null);
+    }
+    setShowRepoForm(true);
+    setRepoStatus(null);
+  };
+
+  const saveRepoForm = () => {
+    if (repoFormType === "azure") {
+      if (!tempRepo.customer || !tempRepo.org || !tempRepo.project || !tempRepo.repoIdOrName || !tempRepo.pat) {
+        alert("⚠️ Customer Name, Azure Org, Project, Repository, and PAT are required fields.");
+        return;
+      }
+
+      const isDuplicate = azureRepos.some((r, idx) => r.customer.toLowerCase() === tempRepo.customer.toLowerCase() && idx !== editingRepoIndex);
+      if (isDuplicate) {
+        alert("⚠️ A repository configuration for this customer name already exists.");
+        return;
+      }
+
+      if (editingRepoIndex !== null) {
+        setAzureRepos(prev => prev.map((r, idx) => idx === editingRepoIndex ? tempRepo : r));
+      } else {
+        setAzureRepos(prev => [...prev, tempRepo]);
+      }
+    } else {
+      if (!tempRepo.customer || !tempRepo.owner || !tempRepo.repo || !tempRepo.token) {
+        alert("⚠️ Customer Name, GitHub Owner, Repository, and Token are required fields.");
+        return;
+      }
+
+      const isDuplicate = githubRepos.some((r, idx) => r.customer.toLowerCase() === tempRepo.customer.toLowerCase() && idx !== editingRepoIndex);
+      if (isDuplicate) {
+        alert("⚠️ A repository configuration for this customer name already exists.");
+        return;
+      }
+
+      if (editingRepoIndex !== null) {
+        setGithubRepos(prev => prev.map((r, idx) => idx === editingRepoIndex ? tempRepo : r));
+      } else {
+        setGithubRepos(prev => [...prev, tempRepo]);
+      }
+    }
+    setShowRepoForm(false);
+  };
+
+  const deleteAzureRepo = (index) => {
+    if (confirm(`Are you sure you want to delete repository for customer "${azureRepos[index].customer}"?`)) {
+      setAzureRepos(prev => prev.filter((_, idx) => idx !== index));
+    }
+  };
+
+  const deleteGithubRepo = (index) => {
+    if (confirm(`Are you sure you want to delete repository for customer "${githubRepos[index].customer}"?`)) {
+      setGithubRepos(prev => prev.filter((_, idx) => idx !== index));
+    }
+  };
+
+  const verifyAzureRepoConnection = async (repo) => {
+    setRepoStatus(`Testing connection for ${repo.customer}...`);
+    try {
+      const result = await window.api.verifyAzureConnection({ repoSettings: repo });
+      if (result.valid) {
+        setRepoStatus(`✅ Connection successful for ${repo.customer}! (Repository: ${result.repoName})`);
+      } else {
+        setRepoStatus(`❌ Connection failed for ${repo.customer}: ${result.error}`);
+      }
+    } catch (err) {
+      setRepoStatus(`❌ Connection request failed for ${repo.customer}: ${err.message}`);
+    }
+  };
+
+  const verifyGitHubRepoConnection = async (repo) => {
+    setRepoStatus(`Testing connection for ${repo.customer}...`);
+    try {
+      const result = await window.api.verifyGitHubToken({ repoSettings: repo });
+      if (result.valid) {
+        setRepoStatus(`✅ Connection successful for ${repo.customer}! (Repository: ${result.repoName})`);
+      } else {
+        setRepoStatus(`❌ Connection failed for ${repo.customer}: ${result.error}`);
+      }
+    } catch (err) {
+      setRepoStatus(`❌ Connection request failed for ${repo.customer}: ${err.message}`);
+    }
+  };
+
+  const verifySingleAzureConnection = async () => {
+    setRepoStatus("Checking repository connection...");
+    try {
+      const result = await window.api.verifyAzureConnection({ repoSettings: azure });
+      if (result.valid) {
+        setRepoStatus(`✅ Connection successful! (Repository: ${result.repoName})`);
+      } else {
+        setRepoStatus(`❌ Connection failed: ${result.error}`);
+      }
+    } catch (err) {
+      setRepoStatus(`❌ Connection request failed: ${err.message}`);
     }
   };
 
@@ -534,28 +701,104 @@ export default function SettingsScreen({ onBack }) {
 
       // Validate Repo
       if (repoType === "github") {
-        if (!github.token || !github.owner || !github.repo) {
-          setRepoStatus("❌ GitHub Token, Owner, and Repository are required fields.");
-          alert("⚠️ Please fill in all required repository fields");
-          return;
+        if (multiRepoGithub) {
+          if (!githubRepos || githubRepos.length === 0) {
+            setRepoStatus("❌ At least one GitHub repository configuration is required in multi-repository mode.");
+            alert("⚠️ Please add at least one GitHub repository configuration.");
+            return;
+          }
+        } else {
+          if (!github.token || !github.owner || !github.repo) {
+            setRepoStatus("❌ GitHub Token, Owner, and Repository are required fields.");
+            alert("⚠️ Please fill in all required repository fields");
+            return;
+          }
         }
       }
 
       if (repoType === "azure") {
-        if (!azure.org || !azure.project || !azure.repoIdOrName || !azure.pat) {
-          setRepoStatus("❌ Azure Org, Project, Repository, and PAT are required fields.");
-          alert("⚠️ Please fill in all required repository fields");
-          return;
+        if (multiRepo) {
+          if (!azureRepos || azureRepos.length === 0) {
+            setRepoStatus("❌ At least one Azure repository configuration is required in multi-repository mode.");
+            alert("⚠️ Please add at least one Azure repository configuration.");
+            return;
+          }
+        } else {
+          if (!azure.org || !azure.project || !azure.repoIdOrName || !azure.pat) {
+            setRepoStatus("❌ Azure Org, Project, Repository, and PAT are required fields.");
+            alert("⚠️ Please fill in all required repository fields");
+            return;
+          }
         }
       }
 
+      const existingConfig = await window.api.getConfig();
+      const currentSelectedCustomer = existingConfig?.selectedCustomer;
+      const activeCustomer = multiRepo && azureRepos.length > 0
+        ? (azureRepos.some(r => r.customer === currentSelectedCustomer) ? currentSelectedCustomer : azureRepos[0].customer)
+        : "";
+
+      const defaultAzure = multiRepo && azureRepos.length > 0
+        ? {
+            org: azureRepos[0].org,
+            project: azureRepos[0].project,
+            repoIdOrName: azureRepos[0].repoIdOrName,
+            pat: azureRepos[0].pat,
+            baseUrl: azureRepos[0].baseUrl || undefined,
+            apiVersion: azureRepos[0].apiVersion || "7.1",
+            enableAccept: azureRepos[0].enableAccept !== false,
+            enableReject: azureRepos[0].enableReject !== false
+          }
+        : { ...azure, baseUrl: azure.baseUrl || undefined };
+
+      const currentSelectedCustomerGithub = existingConfig?.selectedCustomerGithub;
+      const activeCustomerGithub = multiRepoGithub && githubRepos.length > 0
+        ? (githubRepos.some(r => r.customer === currentSelectedCustomerGithub) ? currentSelectedCustomerGithub : githubRepos[0].customer)
+        : "";
+
+      const defaultGithub = multiRepoGithub && githubRepos.length > 0
+        ? {
+            token: githubRepos[0].token,
+            owner: githubRepos[0].owner,
+            repo: githubRepos[0].repo,
+            baseUrl: githubRepos[0].baseUrl || undefined,
+            enableAccept: githubRepos[0].enableAccept !== false,
+            enableReject: githubRepos[0].enableReject !== false
+          }
+        : { ...github, baseUrl: github.baseUrl || undefined };
+
       await window.api.saveConfig({
         repoType,
-        github: { ...github, baseUrl: github.baseUrl || undefined },
-        azure: { ...azure, baseUrl: azure.baseUrl || undefined },
+        github: defaultGithub,
+        azure: defaultAzure,
+        multiRepo,
+        azureRepos: azureRepos.map(r => ({
+          customer: r.customer,
+          org: r.org,
+          project: r.project,
+          repoIdOrName: r.repoIdOrName,
+          pat: r.pat,
+          baseUrl: r.baseUrl || undefined,
+          apiVersion: r.apiVersion || "7.1",
+          enableAccept: r.enableAccept !== false,
+          enableReject: r.enableReject !== false
+        })),
+        selectedCustomer: activeCustomer,
+
+        multiRepoGithub,
+        githubRepos: githubRepos.map(r => ({
+          customer: r.customer,
+          owner: r.owner,
+          repo: r.repo,
+          token: r.token,
+          baseUrl: r.baseUrl || undefined,
+          enableAccept: r.enableAccept !== false,
+          enableReject: r.enableReject !== false
+        })),
+        selectedCustomerGithub: activeCustomerGithub,
 
         // legacy compatibility
-        githubToken: github.token,
+        githubToken: defaultGithub.token,
 
         llm: {
           provider,
@@ -573,8 +816,8 @@ export default function SettingsScreen({ onBack }) {
           user: email.user,
           pass: email.pass,
           from: email.from,
-          to: email.to,
-          replyTo: email.replyTo
+          cc: email.cc,
+          disabled: email.disabled || false
         },
         ifs: {
           metadataUrl: ifs.metadataUrl,
@@ -699,170 +942,494 @@ export default function SettingsScreen({ onBack }) {
 
               {repoType === "github" && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '4px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>GitHub Personal Access Token (PAT)</label>
-                    <input
-                      type="password"
-                      className="input"
-                      placeholder="ghp_..."
-                      value={github.token}
-                      onChange={(e) => setGithub({ ...github, token: e.target.value })}
-                    />
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Organization / Owner</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)', fontWeight: '600' }}>
                       <input
-                        className="input"
-                        placeholder="e.g. google"
-                        value={github.owner}
-                        onChange={(e) => setGithub({ ...github, owner: e.target.value })}
+                        type="checkbox"
+                        id="enable-multi-repo-github"
+                        checked={multiRepoGithub}
+                        onChange={(e) => {
+                          setMultiRepoGithub(e.target.checked);
+                          setRepoStatus(null);
+                        }}
+                        style={{ cursor: 'pointer' }}
                       />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Repository Name</label>
-                      <input
-                        className="input"
-                        placeholder="e.g. antigravity"
-                        value={github.repo}
-                        onChange={(e) => setGithub({ ...github, repo: e.target.value })}
-                      />
-                    </div>
+                      Enable Multi-Repository Mode (Multiple Customers)
+                    </label>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Base URL (Optional — For GitHub Enterprise)</label>
-                    <input
-                      className="input"
-                      placeholder="e.g. https://github.company.com/api/v3"
-                      value={github.baseUrl}
-                      onChange={(e) => setGithub({ ...github, baseUrl: e.target.value })}
-                    />
-                  </div>
+                  {!multiRepoGithub ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>GitHub Personal Access Token (PAT)</label>
+                        <input
+                          type="password"
+                          className="input"
+                          placeholder="ghp_..."
+                          value={github.token}
+                          onChange={(e) => setGithub({ ...github, token: e.target.value })}
+                        />
+                      </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-dark)', paddingTop: '12px', marginTop: '4px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feature Controls</label>
-                    <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Organization / Owner</label>
+                          <input
+                            className="input"
+                            placeholder="e.g. google"
+                            value={github.owner}
+                            onChange={(e) => setGithub({ ...github, owner: e.target.value })}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Repository Name</label>
+                          <input
+                            className="input"
+                            placeholder="e.g. antigravity"
+                            value={github.repo}
+                            onChange={(e) => setGithub({ ...github, repo: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Base URL (Optional — For GitHub Enterprise)</label>
                         <input
-                          type="checkbox"
-                          id="github-enable-accept"
-                          checked={github.enableAccept !== false}
-                          onChange={(e) => setGithub({ ...github, enableAccept: e.target.checked })}
-                          style={{ cursor: 'pointer' }}
+                          className="input"
+                          placeholder="e.g. https://github.company.com/api/v3"
+                          value={github.baseUrl}
+                          onChange={(e) => setGithub({ ...github, baseUrl: e.target.value })}
                         />
-                        Enable Accept Pull Request
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
-                        <input
-                          type="checkbox"
-                          id="github-enable-reject"
-                          checked={github.enableReject !== false}
-                          onChange={(e) => setGithub({ ...github, enableReject: e.target.checked })}
-                          style={{ cursor: 'pointer' }}
-                        />
-                        Enable Reject Pull Request
-                      </label>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-dark)', paddingTop: '12px', marginTop: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feature Controls</label>
+                        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                            <input
+                              type="checkbox"
+                              id="github-enable-accept"
+                              checked={github.enableAccept !== false}
+                              onChange={(e) => setGithub({ ...github, enableAccept: e.target.checked })}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            Enable Accept Pull Request
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                            <input
+                              type="checkbox"
+                              id="github-enable-reject"
+                              checked={github.enableReject !== false}
+                              onChange={(e) => setGithub({ ...github, enableReject: e.target.checked })}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            Enable Reject Pull Request
+                          </label>
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-dark)', paddingBottom: '8px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Configured Customer Repositories ({githubRepos.length})</span>
+                        <button
+                          onClick={() => openRepoForm(null, null, "github")}
+                          className="btn primary"
+                          style={{ padding: '6px 14px', fontSize: '12px', height: '32px' }}
+                        >
+                          ➕ Add Customer Repo
+                        </button>
+                      </div>
+
+                      {githubRepos.length === 0 ? (
+                        <div style={{ padding: '32px', textAlign: 'center', background: 'rgba(0,0,0,0.15)', borderRadius: 'var(--radius-md)', color: 'var(--text-muted)', border: '1px dashed var(--border-dark)', fontSize: '13px' }}>
+                          No customer repositories configured yet. Click "Add Customer Repo" to configure one.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          {githubRepos.map((repo, idx) => (
+                            <div key={idx} className="panel" style={{ margin: 0, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.1)', border: '1px solid var(--border-dark)' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <span style={{ fontWeight: '700', color: 'var(--accent-light)', fontSize: '14px' }}>{repo.customer}</span>
+                                  {repo.enableAccept && <span className="badge" style={{ fontSize: '9px', padding: '1px 5px', color: 'var(--green)', borderColor: 'rgba(52,211,153,0.3)', background: 'rgba(52,211,153,0.05)' }}>Accept PR</span>}
+                                  {repo.enableReject && <span className="badge" style={{ fontSize: '9px', padding: '1px 5px', color: 'var(--red)', borderColor: 'rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.05)' }}>Reject PR</span>}
+                                </div>
+                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'Consolas, Monaco, monospace' }}>
+                                  {repo.owner} / {repo.repo}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: '10px' }}>
+                                <button
+                                  onClick={() => verifyGitHubRepoConnection(repo)}
+                                  className="btn ghost"
+                                  style={{ padding: '0 12px', fontSize: '12px', height: '28px', color: 'var(--text-secondary)' }}
+                                >
+                                  🔍 Test
+                                </button>
+                                <button
+                                  onClick={() => openRepoForm(repo, idx, "github")}
+                                  className="btn ghost"
+                                  style={{ padding: '0 12px', fontSize: '12px', height: '28px' }}
+                                >
+                                  ✏️ Edit
+                                </button>
+                                <button
+                                  onClick={() => deleteGithubRepo(idx)}
+                                  className="btn danger ghost"
+                                  style={{ padding: '0 12px', fontSize: '12px', height: '28px' }}
+                                >
+                                  🗑️ Delete
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
               {repoType === "azure" && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '4px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Azure DevOps Organization</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)', fontWeight: '600' }}>
                       <input
-                        className="input"
-                        placeholder="e.g. my-org-name"
-                        value={azure.org}
-                        onChange={(e) => setAzure({ ...azure, org: e.target.value })}
+                        type="checkbox"
+                        id="enable-multi-repo"
+                        checked={multiRepo}
+                        onChange={(e) => {
+                          setMultiRepo(e.target.checked);
+                          setRepoStatus(null);
+                        }}
+                        style={{ cursor: 'pointer' }}
                       />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Project Name</label>
-                      <input
-                        className="input"
-                        placeholder="e.g. my-project-name"
-                        value={azure.project}
-                        onChange={(e) => setAzure({ ...azure, project: e.target.value })}
-                      />
-                    </div>
+                      Enable Multi-Repository Mode (Multiple Customers)
+                    </label>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Repository ID or Name</label>
-                    <input
-                      className="input"
-                      placeholder="e.g. my-repo"
-                      value={azure.repoIdOrName}
-                      onChange={(e) => setAzure({ ...azure, repoIdOrName: e.target.value })}
-                    />
-                  </div>
+                  {!multiRepo ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Azure DevOps Organization</label>
+                          <input
+                            className="input"
+                            placeholder="e.g. my-org-name"
+                            value={azure.org}
+                            onChange={(e) => setAzure({ ...azure, org: e.target.value })}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Project Name</label>
+                          <input
+                            className="input"
+                            placeholder="e.g. my-project-name"
+                            value={azure.project}
+                            onChange={(e) => setAzure({ ...azure, project: e.target.value })}
+                          />
+                        </div>
+                      </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Azure DevOps Personal Access Token (PAT)</label>
-                    <input
-                      type="password"
-                      className="input"
-                      placeholder="PAT token..."
-                      value={azure.pat}
-                      onChange={(e) => setAzure({ ...azure, pat: e.target.value })}
-                    />
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Base URL (Optional)</label>
-                      <input
-                        className="input"
-                        placeholder="e.g. https://dev.azure.com/my-org"
-                        value={azure.baseUrl}
-                        onChange={(e) => setAzure({ ...azure, baseUrl: e.target.value })}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>API Version</label>
-                      <input
-                        className="input"
-                        value={azure.apiVersion}
-                        onChange={(e) => setAzure({ ...azure, apiVersion: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-dark)', paddingTop: '12px', marginTop: '4px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feature Controls</label>
-                    <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Repository ID or Name</label>
                         <input
-                          type="checkbox"
-                          id="azure-enable-accept"
-                          checked={azure.enableAccept !== false}
-                          onChange={(e) => setAzure({ ...azure, enableAccept: e.target.checked })}
-                          style={{ cursor: 'pointer' }}
+                          className="input"
+                          placeholder="e.g. my-repo"
+                          value={azure.repoIdOrName}
+                          onChange={(e) => setAzure({ ...azure, repoIdOrName: e.target.value })}
                         />
-                        Enable Accept Pull Request
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Azure DevOps Personal Access Token (PAT)</label>
                         <input
-                          type="checkbox"
-                          id="azure-enable-reject"
-                          checked={azure.enableReject !== false}
-                          onChange={(e) => setAzure({ ...azure, enableReject: e.target.checked })}
-                          style={{ cursor: 'pointer' }}
+                          type="password"
+                          className="input"
+                          placeholder="PAT token..."
+                          value={azure.pat}
+                          onChange={(e) => setAzure({ ...azure, pat: e.target.value })}
                         />
-                        Enable Reject/Abandon Pull Request
-                      </label>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Base URL (Optional)</label>
+                          <input
+                            className="input"
+                            placeholder="e.g. https://dev.azure.com/my-org"
+                            value={azure.baseUrl}
+                            onChange={(e) => setAzure({ ...azure, baseUrl: e.target.value })}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>API Version</label>
+                          <input
+                            className="input"
+                            value={azure.apiVersion}
+                            onChange={(e) => setAzure({ ...azure, apiVersion: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-dark)', paddingTop: '12px', marginTop: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feature Controls</label>
+                        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                            <input
+                              type="checkbox"
+                              id="azure-enable-accept"
+                              checked={azure.enableAccept !== false}
+                              onChange={(e) => setAzure({ ...azure, enableAccept: e.target.checked })}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            Enable Accept Pull Request
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                            <input
+                              type="checkbox"
+                              id="azure-enable-reject"
+                              checked={azure.enableReject !== false}
+                              onChange={(e) => setAzure({ ...azure, enableReject: e.target.checked })}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            Enable Reject/Abandon Pull Request
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-dark)', paddingBottom: '8px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Configured Customer Repositories ({azureRepos.length})</span>
+                        <button
+                          onClick={() => openRepoForm(null)}
+                          className="btn primary"
+                          style={{ padding: '6px 14px', fontSize: '12px', height: '32px' }}
+                        >
+                          ➕ Add Customer Repo
+                        </button>
+                      </div>
+
+                      {azureRepos.length === 0 ? (
+                        <div style={{ padding: '32px', textAlign: 'center', background: 'rgba(0,0,0,0.15)', borderRadius: 'var(--radius-md)', color: 'var(--text-muted)', border: '1px dashed var(--border-dark)', fontSize: '13px' }}>
+                          No customer repositories configured yet. Click "Add Customer Repo" to configure one.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          {azureRepos.map((repo, idx) => (
+                            <div key={idx} className="panel" style={{ margin: 0, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.1)', border: '1px solid var(--border-dark)' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <span style={{ fontWeight: '700', color: 'var(--accent-light)', fontSize: '14px' }}>{repo.customer}</span>
+                                  {repo.enableAccept && <span className="badge" style={{ fontSize: '9px', padding: '1px 5px', color: 'var(--green)', borderColor: 'rgba(52,211,153,0.3)', background: 'rgba(52,211,153,0.05)' }}>Accept PR</span>}
+                                  {repo.enableReject && <span className="badge" style={{ fontSize: '9px', padding: '1px 5px', color: 'var(--red)', borderColor: 'rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.05)' }}>Reject PR</span>}
+                                </div>
+                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'Consolas, Monaco, monospace' }}>
+                                  {repo.org} / {repo.project} / {repo.repoIdOrName}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: '10px' }}>
+                                <button
+                                  onClick={() => verifyAzureRepoConnection(repo)}
+                                  className="btn ghost"
+                                  style={{ padding: '0 12px', fontSize: '12px', height: '28px', color: 'var(--text-secondary)' }}
+                                >
+                                  🔍 Test
+                                </button>
+                                <button
+                                  onClick={() => openRepoForm(repo, idx)}
+                                  className="btn ghost"
+                                  style={{ padding: '0 12px', fontSize: '12px', height: '28px' }}
+                                >
+                                  ✏️ Edit
+                                </button>
+                                <button
+                                  onClick={() => deleteAzureRepo(idx)}
+                                  className="btn danger ghost"
+                                  style={{ padding: '0 12px', fontSize: '12px', height: '28px' }}
+                                >
+                                  🗑️ Delete
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Form Modal for Multi-Repo */}
+              {showRepoForm && (
+                <div className="ai-overlay" style={{ zIndex: 10000 }}>
+                  <div className="ai-modal" style={{ width: 'min(550px, 92vw)', height: 'auto', maxHeight: '90vh', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: '700', borderBottom: '1px solid var(--border-dark)', paddingBottom: '10px', margin: 0, color: 'var(--text-primary)' }}>
+                      {editingRepoIndex !== null ? '✏️ Edit Customer Repository' : '➕ Add Customer Repository'}
+                    </h3>
+                    
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', overflowY: 'auto', paddingRight: '4px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Customer Name / Identifier</label>
+                        <input
+                          className="input"
+                          placeholder="e.g. Customer A"
+                          value={tempRepo.customer}
+                          onChange={(e) => setTempRepo({ ...tempRepo, customer: e.target.value })}
+                        />
+                      </div>
+
+                      {repoFormType === "azure" ? (
+                        <>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Azure Organization</label>
+                              <input
+                                className="input"
+                                placeholder="e.g. my-org"
+                                value={tempRepo.org}
+                                onChange={(e) => setTempRepo({ ...tempRepo, org: e.target.value })}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Project Name</label>
+                              <input
+                                className="input"
+                                placeholder="e.g. my-project"
+                                value={tempRepo.project}
+                                onChange={(e) => setTempRepo({ ...tempRepo, project: e.target.value })}
+                              />
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Repository ID or Name</label>
+                            <input
+                              className="input"
+                              placeholder="e.g. my-repo"
+                              value={tempRepo.repoIdOrName}
+                              onChange={(e) => setTempRepo({ ...tempRepo, repoIdOrName: e.target.value })}
+                            />
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Personal Access Token (PAT)</label>
+                            <input
+                              type="password"
+                              className="input"
+                              placeholder="PAT token..."
+                              value={tempRepo.pat}
+                              onChange={(e) => setTempRepo({ ...tempRepo, pat: e.target.value })}
+                            />
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Base URL (Optional)</label>
+                              <input
+                                className="input"
+                                placeholder="e.g. https://dev.azure.com/my-org"
+                                value={tempRepo.baseUrl}
+                                onChange={(e) => setTempRepo({ ...tempRepo, baseUrl: e.target.value })}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>API Version</label>
+                              <input
+                                className="input"
+                                value={tempRepo.apiVersion}
+                                onChange={(e) => setTempRepo({ ...tempRepo, apiVersion: e.target.value })}
+                              />
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>GitHub Organization / Owner</label>
+                              <input
+                                className="input"
+                                placeholder="e.g. google"
+                                value={tempRepo.owner}
+                                onChange={(e) => setTempRepo({ ...tempRepo, owner: e.target.value })}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Repository Name</label>
+                              <input
+                                className="input"
+                                placeholder="e.g. antigravity"
+                                value={tempRepo.repo}
+                                onChange={(e) => setTempRepo({ ...tempRepo, repo: e.target.value })}
+                              />
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Personal Access Token (PAT)</label>
+                            <input
+                              type="password"
+                              className="input"
+                              placeholder="ghp_..."
+                              value={tempRepo.token}
+                              onChange={(e) => setTempRepo({ ...tempRepo, token: e.target.value })}
+                            />
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Base URL (Optional — For GitHub Enterprise)</label>
+                            <input
+                              className="input"
+                              placeholder="e.g. https://github.company.com/api/v3"
+                              value={tempRepo.baseUrl}
+                              onChange={(e) => setTempRepo({ ...tempRepo, baseUrl: e.target.value })}
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-dark)', paddingTop: '12px', marginTop: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feature Controls</label>
+                        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                            <input
+                              type="checkbox"
+                              checked={tempRepo.enableAccept !== false}
+                              onChange={(e) => setTempRepo({ ...tempRepo, enableAccept: e.target.checked })}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            Enable Accept Pull Request
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-primary)' }}>
+                            <input
+                              type="checkbox"
+                              checked={tempRepo.enableReject !== false}
+                              onChange={(e) => setTempRepo({ ...tempRepo, enableReject: e.target.checked })}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            Enable Reject/Abandon Pull Request
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px', borderTop: '1px solid var(--border-dark)', paddingTop: '12px' }}>
+                      <button onClick={() => setShowRepoForm(false)} className="btn ghost" style={{ height: '36px' }}>Cancel</button>
+                      <button onClick={saveRepoForm} className="btn primary" style={{ height: '36px' }}>Save Repo</button>
                     </div>
                   </div>
                 </div>
               )}
 
               <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <button onClick={verifyToken} className="btn success">🔍 Verify Repository Settings</button>
+                {((repoType === "github" && !multiRepoGithub) || (repoType === "azure" && !multiRepo)) && (
+                  <button onClick={repoType === "github" ? verifyToken : verifySingleAzureConnection} className="btn success">
+                    🔍 Verify Repository Settings
+                  </button>
+                )}
                 {repoStatus && <span style={{ fontSize: '13px', fontWeight: '500', color: repoStatus.includes('✅') ? 'var(--green)' : 'var(--red)' }}>{repoStatus}</span>}
               </div>
             </div>
@@ -1152,34 +1719,33 @@ export default function SettingsScreen({ onBack }) {
                   />
                 </div>
               </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>From Address</label>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>From Address (Optional)</label>
                   <input
                     className="input"
-                    placeholder="sender@example.com"
+                    placeholder="sender@example.com (defaults to SMTP Username)"
                     value={email.from}
                     onChange={(e) => setEmail({ ...email, from: e.target.value })}
                   />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>To Address (Default)</label>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>CC Address (Optional)</label>
                   <input
                     className="input"
-                    placeholder="recipient@example.com"
-                    value={email.to}
-                    onChange={(e) => setEmail({ ...email, to: e.target.value })}
+                    placeholder="cc@example.com"
+                    value={email.cc || ""}
+                    onChange={(e) => setEmail({ ...email, cc: e.target.value })}
                   />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reply-To Address</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', marginTop: '6px' }}>
                   <input
-                    className="input"
-                    placeholder="replies@example.com"
-                    value={email.replyTo}
-                    onChange={(e) => setEmail({ ...email, replyTo: e.target.value })}
+                    type="checkbox"
+                    id="emailDisabled"
+                    checked={email.disabled || false}
+                    onChange={(e) => setEmail({ ...email, disabled: e.target.checked })}
                   />
+                  <label htmlFor="emailDisabled" style={{ fontSize: '13px', cursor: 'pointer', userSelect: 'none', color: 'var(--text-primary)' }}>Disable Send Email Option</label>
                 </div>
               </div>
 

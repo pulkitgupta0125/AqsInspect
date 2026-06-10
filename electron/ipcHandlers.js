@@ -261,22 +261,113 @@ ipcMain.handle("config:verify-token", async (_evt, token) => {
 // -----------------------------
 // IPC: GitHub Token Verify (used by SettingsScreen.jsx)
 // -----------------------------
-ipcMain.handle("github:verify", async (_evt, token) => {
+ipcMain.handle("github:verify", async (_evt, payload) => {
+  const token = typeof payload === "string" ? payload : payload?.repoSettings?.token;
   const t = normalizeToken(token);
   if (!t) return { valid: false, error: "Token is required" };
 
+  const owner = payload?.repoSettings?.owner;
+  const repo = payload?.repoSettings?.repo;
+  const baseUrl = payload?.repoSettings?.baseUrl || "https://api.github.com";
+
   try {
-    const res = await axios.get("https://api.github.com/user", {
-      headers: {
-        Authorization: `Bearer ${t}`,
-        Accept: "application/vnd.github+json"
-      }
-    });
-    return { valid: true, username: res.data.login };
+    const cleanBaseUrl = String(baseUrl).trim().replace(/\/+$/, "");
+    const url = owner && repo
+      ? `${cleanBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
+      : `${cleanBaseUrl}/user`;
+
+    const headers = {
+      Authorization: `Bearer ${t}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "AQSInspect"
+    };
+
+    const res = await axios.get(url, { headers });
+    if (owner && repo) {
+      return { valid: true, repoName: res.data?.full_name || `${owner}/${repo}` };
+    }
+    return { valid: true, username: res.data?.login };
   } catch (e) {
-    return { valid: false, error: e.response?.status === 401 ? "Invalid token" : e.message };
+    const errorMsg = e.response?.data?.message || e.message || "Unknown error";
+    return { valid: false, error: e.response?.status === 401 ? "Invalid token" : errorMsg };
   }
 });
+
+ipcMain.handle("azure:verify", async (_evt, payload) => {
+  const a = payload?.repoSettings || {};
+  const org = a.org;
+  const project = a.project;
+  const repoIdOrName = a.repoIdOrName;
+  const pat = a.pat;
+  const baseUrl = a.baseUrl || "https://dev.azure.com";
+  const apiVersion = a.apiVersion || "7.1";
+
+  if (!org || !project || !repoIdOrName || !pat) {
+    return { valid: false, error: "Settings are incomplete (org/project/repo/PAT required)." };
+  }
+
+  try {
+    const cleanBaseUrl = String(baseUrl).trim().replace(/\/+$/, "");
+    const orgRoot = cleanBaseUrl.toLowerCase().endsWith("/" + org.toLowerCase())
+      ? cleanBaseUrl
+      : `${cleanBaseUrl}/${encodeURIComponent(org)}`;
+
+    // Query pullrequests instead of repository metadata to ensure compatibility with repo names/IDs
+    const url = `${orgRoot}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(repoIdOrName)}/pullrequests?api-version=${encodeURIComponent(apiVersion)}&$top=1`;
+    
+    const headers = {
+      Authorization: `Basic ${Buffer.from(`:${pat}`, 'utf8').toString('base64')}`,
+      Accept: "application/json"
+    };
+
+    const res = await axios.get(url, { headers });
+    if (res.status === 200) {
+      return { valid: true, repoName: repoIdOrName };
+    }
+    return { valid: false, error: `Server returned status ${res.status}` };
+  } catch (e) {
+    const errorMsg = e.response?.data?.message || e.message || "Unknown error";
+    return { valid: false, error: errorMsg };
+  }
+});
+
+/* Helper to resolve Azure repository settings for multi-repository mode */
+function getAzureSettings(cfg, payload) {
+  if (payload?.repoSettings) {
+    return payload.repoSettings;
+  }
+  if (cfg?.multiRepo && Array.isArray(cfg?.azureRepos) && cfg.azureRepos.length > 0) {
+    if (payload?.customer) {
+      const repo = cfg.azureRepos.find(r => r.customer === payload.customer);
+      if (repo) return repo;
+    }
+    if (cfg.selectedCustomer) {
+      const repo = cfg.azureRepos.find(r => r.customer === cfg.selectedCustomer);
+      if (repo) return repo;
+    }
+    return cfg.azureRepos[0];
+  }
+  return cfg?.azure || {};
+}
+
+/* Helper to resolve GitHub repository settings for multi-repository mode */
+function getGithubSettings(cfg, payload) {
+  if (payload?.repoSettings) {
+    return payload.repoSettings;
+  }
+  if (cfg?.multiRepoGithub && Array.isArray(cfg?.githubRepos) && cfg.githubRepos.length > 0) {
+    if (payload?.customer) {
+      const repo = cfg.githubRepos.find(r => r.customer === payload.customer);
+      if (repo) return repo;
+    }
+    if (cfg.selectedCustomerGithub) {
+      const repo = cfg.githubRepos.find(r => r.customer === cfg.selectedCustomerGithub);
+      if (repo) return repo;
+    }
+    return cfg.githubRepos[0];
+  }
+  return cfg?.github || { token: cfg?.githubToken };
+}
 
 ipcMain.handle("repo:listPullRequests", async (_evt, payload) => {
   const { repoType, filters } = payload || {};
@@ -285,8 +376,8 @@ ipcMain.handle("repo:listPullRequests", async (_evt, payload) => {
   const effectiveRepoType = (repoType || cfg.repoType || "github").toLowerCase();
   const repoSettings =
     effectiveRepoType === "azure"
-      ? (cfg.azure || {})
-      : (cfg.github || { token: cfg.githubToken });
+      ? getAzureSettings(cfg, payload)
+      : getGithubSettings(cfg, payload);
 
   try {
     console.log(`📋 Loading ${effectiveRepoType} PRs...`);
@@ -327,8 +418,8 @@ ipcMain.handle("repo:getPullRequestDetails", async (_evt, payload) => {
   const effectiveRepoType = (repoType || cfg.repoType || "github").toLowerCase();
   const repoSettings =
     effectiveRepoType === "azure"
-      ? (cfg.azure || {})
-      : (cfg.github || { token: cfg.githubToken });
+      ? getAzureSettings(cfg, payload)
+      : getGithubSettings(cfg, payload);
 
   try {
     const provider = getProvider(effectiveRepoType);
@@ -346,8 +437,8 @@ ipcMain.handle("pr:performAction", async (_evt, payload) => {
   const effectiveRepoType = (repoType || cfg.repoType || "github").toLowerCase();
   const repoSettings =
     effectiveRepoType === "azure"
-      ? (cfg.azure || {})
-      : (cfg.github || { token: cfg.githubToken });
+      ? getAzureSettings(cfg, payload)
+      : getGithubSettings(cfg, payload);
 
   try {
     const provider = getProvider(effectiveRepoType);
@@ -377,14 +468,439 @@ ipcMain.handle("app:openExternal", async (_evt, url) => {
   }
 });
 
-ipcMain.handle("email:send", async (_evt, payload) => {
-  const { subject, body, to, from, replyTo, config } = payload || {};
-  const smtpConfig = config || {};
+function generateReportHtml(prDetails, aiReview) {
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  
+  const findings = Array.isArray(aiReview.findings) ? aiReview.findings : [];
+  let blockerCount = 0;
+  let majorCount = 0;
+  let minorCount = 0;
+  let infoCount = 0;
 
-  if (!smtpConfig.host || !smtpConfig.port || !smtpConfig.user || !smtpConfig.pass || !from || !to) {
+  findings.forEach(f => {
+    const sev = String(f.severity || "info").toLowerCase();
+    if (sev === "blocker" || sev === "critical") blockerCount++;
+    else if (sev === "major" || sev === "warning") majorCount++;
+    else if (sev === "minor") minorCount++;
+    else infoCount++;
+  });
+
+  const groupedFindings = {};
+  findings.forEach(f => {
+    const fn = f.filename || "General Rules";
+    if (!groupedFindings[fn]) groupedFindings[fn] = [];
+    groupedFindings[fn].push(f);
+  });
+
+  const developer = prDetails.createdBy || prDetails.created_by || prDetails.created_by_login || prDetails.author || "Unknown Developer";
+  const createdAt = prDetails.createdAt || prDetails.created_at || prDetails.created || "N/A";
+  const score = aiReview.score !== undefined ? aiReview.score : (aiReview.summary?.score !== undefined ? aiReview.summary.score : "N/A");
+  const scoreNum = Number(score);
+  
+  let scoreClass = "med";
+  let scoreLabel = "Neutral";
+  if (!isNaN(scoreNum)) {
+    if (scoreNum >= 80) {
+      scoreClass = "high";
+      scoreLabel = "Good";
+    } else if (scoreNum >= 50) {
+      scoreClass = "med";
+      scoreLabel = "Warning";
+    } else {
+      scoreClass = "low";
+      scoreLabel = "Action Req.";
+    }
+  }
+
+  // Generate HTML list of findings grouped by file
+  let findingsHtml = "";
+  Object.keys(groupedFindings).forEach(filename => {
+    findingsHtml += `
+      <div class="file-group">
+        <div class="file-header">${esc(filename)}</div>
+    `;
+    
+    groupedFindings[filename].forEach(f => {
+      const sev = String(f.severity || "info").toLowerCase();
+      const badgeClass = (sev === "blocker" || sev === "critical") ? "blocker" :
+                         (sev === "major" || sev === "warning") ? "major" :
+                         (sev === "minor") ? "minor" : "info";
+
+      findingsHtml += `
+        <div class="finding-card ${badgeClass}">
+          <div class="finding-header">
+            <span class="badge ${badgeClass}">${esc(f.severity || "info")}</span>
+            <span class="finding-title">${esc(f.title || "Finding")}</span>
+          </div>
+          <div class="finding-body">${esc(f.explanation || "")}</div>
+      `;
+
+      if (f.matchText) {
+        findingsHtml += `
+          <div class="metadata-label" style="font-size:9px; margin-top:6px;">Matched Code Snippet</div>
+          <pre class="code-block"><code>${esc(f.matchText)}</code></pre>
+        `;
+      }
+
+      if (f.recommendation) {
+        findingsHtml += `
+          <div class="recommendation-box">
+            <strong>💡 Suggestion:</strong> ${esc(f.recommendation)}
+          </div>
+        `;
+      }
+
+      findingsHtml += `</div>`; // Close finding-card
+    });
+
+    findingsHtml += `</div>`; // Close file-group
+  });
+
+  return `<!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: #1f2937;
+        margin: 30px;
+        line-height: 1.5;
+        background: #ffffff;
+      }
+      .header-banner {
+        background: #0f172a;
+        color: #ffffff;
+        padding: 20px 24px;
+        border-radius: 12px;
+        margin-bottom: 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .header-logo {
+        font-size: 20px;
+        font-weight: 800;
+        color: #6366f1;
+        letter-spacing: -0.5px;
+      }
+      .header-title-section {
+        text-align: right;
+      }
+      .report-title {
+        font-size: 16px;
+        font-weight: 700;
+        margin: 0;
+        color: #ffffff;
+      }
+      .report-subtitle {
+        font-size: 10px;
+        color: #94a3b8;
+        margin: 3px 0 0 0;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      }
+      .grid {
+        display: flex;
+        gap: 24px;
+      }
+      .grid-left {
+        flex: 3;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px 24px;
+      }
+      .grid-right {
+        flex: 1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      .metadata-item {
+        display: flex;
+        flex-direction: column;
+      }
+      .metadata-label {
+        font-size: 10px;
+        font-weight: 600;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .metadata-value {
+        font-size: 13px;
+        font-weight: 500;
+        color: #111827;
+        margin-top: 2px;
+        word-break: break-all;
+      }
+      .score-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 12px 24px;
+        min-width: 100px;
+      }
+      .score-circle {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        font-weight: 800;
+        color: #ffffff;
+        margin-bottom: 4px;
+        box-shadow: 0 3px 8px rgba(99,102,241,0.25);
+      }
+      .score-circle.high { background: #10b981; }
+      .score-circle.med { background: #f59e0b; }
+      .score-circle.low { background: #ef4444; }
+      
+      .score-label {
+        font-size: 10px;
+        font-weight: 700;
+        color: #374151;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+      .severity-pills {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .pill {
+        flex: 1;
+        text-align: center;
+        padding: 8px;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 12px;
+      }
+      .pill.blocker { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+      .pill.major { background: #ffedd5; color: #9a3412; border: 1px solid #fed7aa; }
+      .pill.minor { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+      .pill.info { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
+      
+      .section-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: #1f2937;
+        margin-bottom: 12px;
+        border-bottom: 1px solid #e5e7eb;
+        padding-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .summary-text {
+        font-size: 13px;
+        color: #4b5563;
+        line-height: 1.6;
+      }
+      .file-group {
+        margin-bottom: 20px;
+        page-break-inside: avoid;
+      }
+      .file-header {
+        font-size: 12.5px;
+        font-weight: 700;
+        background: #f1f5f9;
+        color: #334155;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        margin-bottom: 10px;
+        border: 1px solid #e2e8f0;
+        word-break: break-all;
+      }
+      .finding-card {
+        border: 1px solid #e5e7eb;
+        border-left-width: 4px;
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 10px;
+        background: #ffffff;
+        page-break-inside: avoid;
+      }
+      .finding-card.blocker { border-left-color: #ef4444; }
+      .finding-card.major { border-left-color: #f59e0b; }
+      .finding-card.minor { border-left-color: #3b82f6; }
+      .finding-card.info { border-left-color: #6b7280; }
+      
+      .finding-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .badge {
+        font-size: 9px;
+        font-weight: 700;
+        padding: 2px 6px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+      .badge.blocker { background: #ef4444; color: #ffffff; }
+      .badge.major { background: #f59e0b; color: #ffffff; }
+      .badge.minor { background: #3b82f6; color: #ffffff; }
+      .badge.info { background: #6b7280; color: #ffffff; }
+      
+      .finding-title {
+        font-weight: 700;
+        font-size: 13px;
+        color: #111827;
+      }
+      .finding-body {
+        font-size: 12.5px;
+        color: #4b5563;
+        line-height: 1.5;
+      }
+      .code-block {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        padding: 8px 12px;
+        font-family: "JetBrains Mono", Consolas, monospace;
+        font-size: 11px;
+        overflow-x: auto;
+        margin: 6px 0;
+        white-space: pre;
+        color: #0f172a;
+      }
+      .recommendation-box {
+        background: #f0fdf4;
+        border-left: 3px solid #22c55e;
+        padding: 6px 12px;
+        border-radius: 0 4px 4px 0;
+        font-size: 12px;
+        color: #15803d;
+        margin-top: 6px;
+      }
+      .footer {
+        text-align: center;
+        font-size: 10px;
+        color: #9ca3af;
+        margin-top: 32px;
+        border-top: 1px solid #e5e7eb;
+        padding-top: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header-banner">
+      <div class="header-logo">🛡️ AQS Inspect</div>
+      <div class="header-title-section">
+        <h1 class="report-title">Pull Request Review Report</h1>
+        <p class="report-subtitle">Enterprise Code Quality Analysis</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="grid">
+        <div class="grid-left">
+          <div class="metadata-item">
+            <span class="metadata-label">Pull Request</span>
+            <span class="metadata-value">#${esc(prDetails.number || prDetails.id || "N/A")}</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">Title</span>
+            <span class="metadata-value">${esc(prDetails.title || "N/A")}</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">Developer</span>
+            <span class="metadata-value">${esc(developer)}</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">Created At</span>
+            <span class="metadata-value">${esc(createdAt)}</span>
+          </div>
+          <div class="metadata-item" style="grid-column: span 2;">
+            <span class="metadata-label">PR Link</span>
+            <span class="metadata-value" style="font-size:11px;"><a href="${esc(prDetails.html_url || prDetails.url || "")}">${esc(prDetails.html_url || prDetails.url || "View PR")}</a></span>
+          </div>
+        </div>
+        <div class="grid-right">
+          <div class="score-container">
+            <div class="score-circle ${scoreClass}">${score}</div>
+            <span class="score-label">${scoreLabel}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="severity-pills">
+      <div class="pill blocker">🚨 Blocker: ${blockerCount}</div>
+      <div class="pill major">⚠️ Major: ${majorCount}</div>
+      <div class="pill minor">ℹ️ Minor: ${minorCount}</div>
+      <div class="pill info">📋 Info: ${infoCount}</div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Executive Summary</div>
+      <div class="summary-text">${esc(aiReview.summary || "No summary available.")}</div>
+    </div>
+
+    <div class="section-title">Detailed Analysis Findings</div>
+    ${findingsHtml || '<div class="summary-text" style="color: #22c55e;">✅ No quality warnings or blockers detected during code scan.</div>'}
+
+    <div class="footer">
+      Report generated by AQS Inspect Engine on ${new Date().toLocaleString()} • Confidential Enterprise Copy
+    </div>
+  </body>
+  </html>`;
+}
+
+async function generatePdfBuffer(fullHtml) {
+  const { BrowserWindow } = require('electron');
+  const bw = new BrowserWindow({ width: 900, height: 1100, show: false, webPreferences: { offscreen: true } });
+  await bw.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullHtml));
+  // wait for content
+  await new Promise((res) => setTimeout(res, 300));
+  const pdfBuffer = await bw.webContents.printToPDF({ landscape: false, printBackground: true });
+  try { bw.close(); } catch(_) {}
+  return pdfBuffer;
+}
+
+ipcMain.handle("email:send", async (_evt, payload) => {
+  const { subject, body, to, config, prDetails, aiReview } = payload || {};
+  const smtpConfig = config || {};
+  const fromAddress = smtpConfig.from || smtpConfig.user;
+
+  if (smtpConfig.disabled) {
     return {
       ok: false,
-      error: "Incomplete SMTP settings. Please configure host, port, username, password, from, and to addresses."
+      error: "Email sending is disabled in Settings."
+    };
+  }
+
+  const recipient = prDetails?.creatorEmail;
+
+  if (!smtpConfig.host || !smtpConfig.port || !smtpConfig.user || !smtpConfig.pass) {
+    return {
+      ok: false,
+      error: "Incomplete SMTP settings. Please configure host, port, username, and password."
+    };
+  }
+
+  if (!recipient) {
+    return {
+      ok: false,
+      error: "PR Creator email address could not be resolved. Email can only be sent to the PR Creator."
     };
   }
 
@@ -401,13 +917,36 @@ ipcMain.handle("email:send", async (_evt, payload) => {
 
     await transporter.verify();
 
-    const info = await transporter.sendMail({
-      from,
-      to,
-      replyTo,
+    const mailOptions = {
+      from: `"AQS Inspect" <${fromAddress}>`, // Explicitly use the configured from address, masked
+      to: recipient,
       subject,
       text: body
-    });
+    };
+
+    if (smtpConfig.cc) {
+      mailOptions.cc = smtpConfig.cc;
+    }
+
+    // Generate HTML body and PDF attachment if details and review are provided
+    if (prDetails && aiReview) {
+      try {
+        const fullHtml = generateReportHtml(prDetails, aiReview);
+        const pdfBuffer = await generatePdfBuffer(fullHtml);
+        
+        mailOptions.html = fullHtml;
+        mailOptions.attachments = [
+          {
+            filename: `AQS_Report_PR_${prDetails.id || prDetails.number || "Review"}.pdf`,
+            content: pdfBuffer
+          }
+        ];
+      } catch (err) {
+        console.error("Failed to generate PDF attachment for email:", err.message);
+      }
+    }
+
+    const info = await transporter.sendMail(mailOptions);
 
     return { ok: true, info: { messageId: info.messageId, envelope: info.envelope } };
   } catch (e) {
@@ -418,8 +957,10 @@ ipcMain.handle("email:send", async (_evt, payload) => {
 
 ipcMain.handle("email:test", async (_evt, smtpConfig) => {
   if (!smtpConfig?.host || !smtpConfig?.port || !smtpConfig?.user || !smtpConfig?.pass) {
-    return { ok: false, error: "Incomplete SMTP settings. Please configure host, port, username and password." };
+    return { ok: false, error: "Incomplete SMTP settings. Please configure host, port, username, and password." };
   }
+
+  const fromAddress = smtpConfig.from || smtpConfig.user;
 
   try {
     const transporter = nodemailer.createTransport({
@@ -433,6 +974,19 @@ ipcMain.handle("email:test", async (_evt, smtpConfig) => {
     });
 
     await transporter.verify();
+
+    const mailOptions = {
+      from: `"AQS Inspect" <${fromAddress}>`, // Explicitly use the configured from address (or username fallback), masked
+      to: fromAddress, // Send test mail to oneself
+      subject: "AQS Inspect - SMTP Test Email",
+      text: "SMTP Configuration Verified Successfully."
+    };
+
+    if (smtpConfig.cc) {
+      mailOptions.cc = smtpConfig.cc;
+    }
+
+    await transporter.sendMail(mailOptions);
     return { ok: true };
   } catch (e) {
     console.error("email:test failed:", e?.message || e);
@@ -478,401 +1032,7 @@ ipcMain.handle('report:savePdf', async (_evt, payload) => {
     let fullHtml = "";
 
     if (prDetails && aiReview) {
-      // Build structured enterprise report HTML
-      const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      
-      const findings = Array.isArray(aiReview.findings) ? aiReview.findings : [];
-      let blockerCount = 0;
-      let majorCount = 0;
-      let minorCount = 0;
-      let infoCount = 0;
-
-      findings.forEach(f => {
-        const sev = String(f.severity || "info").toLowerCase();
-        if (sev === "blocker" || sev === "critical") blockerCount++;
-        else if (sev === "major" || sev === "warning") majorCount++;
-        else if (sev === "minor") minorCount++;
-        else infoCount++;
-      });
-
-      const groupedFindings = {};
-      findings.forEach(f => {
-        const fn = f.filename || "General Rules";
-        if (!groupedFindings[fn]) groupedFindings[fn] = [];
-        groupedFindings[fn].push(f);
-      });
-
-      const developer = prDetails.createdBy || prDetails.created_by || prDetails.created_by_login || prDetails.author || "Unknown Developer";
-      const createdAt = prDetails.createdAt || prDetails.created_at || prDetails.created || "N/A";
-      const score = aiReview.score !== undefined ? aiReview.score : (aiReview.summary?.score !== undefined ? aiReview.summary.score : "N/A");
-      const scoreNum = Number(score);
-      
-      let scoreClass = "med";
-      let scoreLabel = "Neutral";
-      if (!isNaN(scoreNum)) {
-        if (scoreNum >= 80) {
-          scoreClass = "high";
-          scoreLabel = "Good";
-        } else if (scoreNum >= 50) {
-          scoreClass = "med";
-          scoreLabel = "Warning";
-        } else {
-          scoreClass = "low";
-          scoreLabel = "Action Req.";
-        }
-      }
-
-      // Generate HTML list of findings grouped by file
-      let findingsHtml = "";
-      Object.keys(groupedFindings).forEach(filename => {
-        findingsHtml += `
-          <div class="file-group">
-            <div class="file-header">${esc(filename)}</div>
-        `;
-        
-        groupedFindings[filename].forEach(f => {
-          const sev = String(f.severity || "info").toLowerCase();
-          const badgeClass = (sev === "blocker" || sev === "critical") ? "blocker" :
-                             (sev === "major" || sev === "warning") ? "major" :
-                             (sev === "minor") ? "minor" : "info";
-
-          findingsHtml += `
-            <div class="finding-card ${badgeClass}">
-              <div class="finding-header">
-                <span class="badge ${badgeClass}">${esc(f.severity || "info")}</span>
-                <span class="finding-title">${esc(f.title || "Finding")}</span>
-              </div>
-              <div class="finding-body">${esc(f.explanation || "")}</div>
-          `;
-
-          if (f.matchText) {
-            findingsHtml += `
-              <div class="metadata-label" style="font-size:9px; margin-top:6px;">Matched Code Snippet</div>
-              <pre class="code-block"><code>${esc(f.matchText)}</code></pre>
-            `;
-          }
-
-          if (f.recommendation) {
-            findingsHtml += `
-              <div class="recommendation-box">
-                <strong>💡 Suggestion:</strong> ${esc(f.recommendation)}
-              </div>
-            `;
-          }
-
-          findingsHtml += `</div>`; // Close finding-card
-        });
-
-        findingsHtml += `</div>`; // Close file-group
-      });
-
-      fullHtml = `<!doctype html>
-      <html>
-      <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            color: #1f2937;
-            margin: 30px;
-            line-height: 1.5;
-            background: #ffffff;
-          }
-          .header-banner {
-            background: #0f172a;
-            color: #ffffff;
-            padding: 20px 24px;
-            border-radius: 12px;
-            margin-bottom: 24px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-          }
-          .header-logo {
-            font-size: 20px;
-            font-weight: 800;
-            color: #6366f1;
-            letter-spacing: -0.5px;
-          }
-          .header-title-section {
-            text-align: right;
-          }
-          .report-title {
-            font-size: 16px;
-            font-weight: 700;
-            margin: 0;
-            color: #ffffff;
-          }
-          .report-subtitle {
-            font-size: 10px;
-            color: #94a3b8;
-            margin: 3px 0 0 0;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-          }
-          .card {
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            border-radius: 10px;
-            padding: 16px 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-          }
-          .grid {
-            display: flex;
-            gap: 24px;
-          }
-          .grid-left {
-            flex: 3;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px 24px;
-          }
-          .grid-right {
-            flex: 1;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-          }
-          .metadata-item {
-            display: flex;
-            flex-direction: column;
-          }
-          .metadata-label {
-            font-size: 10px;
-            font-weight: 600;
-            color: #6b7280;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-          }
-          .metadata-value {
-            font-size: 13px;
-            font-weight: 500;
-            color: #111827;
-            margin-top: 2px;
-            word-break: break-all;
-          }
-          .score-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            padding: 12px 24px;
-            min-width: 100px;
-          }
-          .score-circle {
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 22px;
-            font-weight: 800;
-            color: #ffffff;
-            margin-bottom: 4px;
-            box-shadow: 0 3px 8px rgba(99,102,241,0.25);
-          }
-          .score-circle.high { background: #10b981; }
-          .score-circle.med { background: #f59e0b; }
-          .score-circle.low { background: #ef4444; }
-          
-          .score-label {
-            font-size: 10px;
-            font-weight: 700;
-            color: #374151;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-          }
-          .severity-pills {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 20px;
-          }
-          .pill {
-            flex: 1;
-            text-align: center;
-            padding: 8px;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 12px;
-          }
-          .pill.blocker { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-          .pill.major { background: #ffedd5; color: #9a3412; border: 1px solid #fed7aa; }
-          .pill.minor { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
-          .pill.info { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
-          
-          .section-title {
-            font-size: 13px;
-            font-weight: 700;
-            color: #1f2937;
-            margin-bottom: 12px;
-            border-bottom: 1px solid #e5e7eb;
-            padding-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-          }
-          .summary-text {
-            font-size: 13px;
-            color: #4b5563;
-            line-height: 1.6;
-          }
-          .file-group {
-            margin-bottom: 20px;
-            page-break-inside: avoid;
-          }
-          .file-header {
-            font-size: 12.5px;
-            font-weight: 700;
-            background: #f1f5f9;
-            color: #334155;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-family: 'JetBrains Mono', Consolas, monospace;
-            margin-bottom: 10px;
-            border: 1px solid #e2e8f0;
-            word-break: break-all;
-          }
-          .finding-card {
-            border: 1px solid #e5e7eb;
-            border-left-width: 4px;
-            border-radius: 6px;
-            padding: 12px;
-            margin-bottom: 10px;
-            background: #ffffff;
-            page-break-inside: avoid;
-          }
-          .finding-card.blocker { border-left-color: #ef4444; }
-          .finding-card.major { border-left-color: #f59e0b; }
-          .finding-card.minor { border-left-color: #3b82f6; }
-          .finding-card.info { border-left-color: #6b7280; }
-          
-          .finding-header {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 6px;
-          }
-          .badge {
-            font-size: 9px;
-            font-weight: 700;
-            padding: 2px 6px;
-            border-radius: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-          }
-          .badge.blocker { background: #ef4444; color: #ffffff; }
-          .badge.major { background: #f59e0b; color: #ffffff; }
-          .badge.minor { background: #3b82f6; color: #ffffff; }
-          .badge.info { background: #6b7280; color: #ffffff; }
-          
-          .finding-title {
-            font-weight: 700;
-            font-size: 13px;
-            color: #111827;
-          }
-          .finding-body {
-            font-size: 12.5px;
-            color: #4b5563;
-            line-height: 1.5;
-          }
-          .code-block {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 4px;
-            padding: 8px 12px;
-            font-family: "JetBrains Mono", Consolas, monospace;
-            font-size: 11px;
-            overflow-x: auto;
-            margin: 6px 0;
-            white-space: pre;
-            color: #0f172a;
-          }
-          .recommendation-box {
-            background: #f0fdf4;
-            border-left: 3px solid #22c55e;
-            padding: 6px 12px;
-            border-radius: 0 4px 4px 0;
-            font-size: 12px;
-            color: #15803d;
-            margin-top: 6px;
-          }
-          .footer {
-            text-align: center;
-            font-size: 10px;
-            color: #9ca3af;
-            margin-top: 32px;
-            border-top: 1px solid #e5e7eb;
-            padding-top: 12px;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="header-banner">
-          <div class="header-logo">🛡️ AQS Inspect</div>
-          <div class="header-title-section">
-            <h1 class="report-title">Pull Request Review Report</h1>
-            <p class="report-subtitle">Enterprise Code Quality Analysis</p>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="grid">
-            <div class="grid-left">
-              <div class="metadata-item">
-                <span class="metadata-label">Pull Request</span>
-                <span class="metadata-value">#${esc(prDetails.number || prDetails.id || "N/A")}</span>
-              </div>
-              <div class="metadata-item">
-                <span class="metadata-label">Title</span>
-                <span class="metadata-value">${esc(prDetails.title || "N/A")}</span>
-              </div>
-              <div class="metadata-item">
-                <span class="metadata-label">Developer</span>
-                <span class="metadata-value">${esc(developer)}</span>
-              </div>
-              <div class="metadata-item">
-                <span class="metadata-label">Created At</span>
-                <span class="metadata-value">${esc(createdAt)}</span>
-              </div>
-              <div class="metadata-item" style="grid-column: span 2;">
-                <span class="metadata-label">PR Link</span>
-                <span class="metadata-value" style="font-size:11px;"><a href="${esc(prDetails.html_url || prDetails.url || "")}">${esc(prDetails.html_url || prDetails.url || "View PR")}</a></span>
-              </div>
-            </div>
-            <div class="grid-right">
-              <div class="score-container">
-                <div class="score-circle ${scoreClass}">${score}</div>
-                <span class="score-label">${scoreLabel}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="severity-pills">
-          <div class="pill blocker">🚨 Blocker: ${blockerCount}</div>
-          <div class="pill major">⚠️ Major: ${majorCount}</div>
-          <div class="pill minor">ℹ️ Minor: ${minorCount}</div>
-          <div class="pill info">📋 Info: ${infoCount}</div>
-        </div>
-
-        <div class="card">
-          <div class="section-title">Executive Summary</div>
-          <div class="summary-text">${esc(aiReview.summary || "No summary available.")}</div>
-        </div>
-
-        <div class="section-title">Detailed Analysis Findings</div>
-        ${findingsHtml || '<div class="summary-text" style="color: #22c55e;">✅ No quality warnings or blockers detected during code scan.</div>'}
-
-        <div class="footer">
-          Report generated by AQS Inspect Engine on ${new Date().toLocaleString()} • Confidential Enterprise Copy
-        </div>
-      </body>
-      </html>`;
+      fullHtml = generateReportHtml(prDetails, aiReview);
     } else {
       // Minimal markdown -> HTML conversion (sufficient for report formatting)
       const md = String(content || '');
@@ -1247,11 +1407,11 @@ function buildUnifiedPatchForFile(filePath, oldText, newText) {
   };
 }
 
-async function fetchAzurePullRequestDiff({ prUrl, cfg }) {
+async function fetchAzurePullRequestDiff({ prUrl, cfg, payload }) {
   const prId = parseAzurePullRequestId(prUrl);
   if (!prId) throw new Error("Azure PR ID not found in URL");
 
-  const a = cfg?.azure || {};
+  const a = getAzureSettings(cfg, payload);
   const org = a.org;
   const project = a.project;
   const repoIdOrName = a.repoIdOrName;
@@ -1346,6 +1506,7 @@ async function fetchAzurePullRequestDiff({ prUrl, cfg }) {
       additions: files.reduce((s, f) => s + (f.additions || 0), 0),
       deletions: files.reduce((s, f) => s + (f.deletions || 0), 0),
       createdBy: pr?.createdBy?.displayName || pr?.createdBy?.uniqueName || "unknown",
+      creatorEmail: pr?.createdBy?.uniqueName && pr.createdBy.uniqueName.includes("@") ? pr.createdBy.uniqueName : "",
       createdAt: pr?.creationDate,
       description: pr?.description || "",
       sourceBranch: pr?.sourceRefName?.replace("refs/heads/", ""),
@@ -1388,11 +1549,12 @@ ipcMain.handle("pr:fetchDiff", async (_evt, payload) => {
   const effectiveRepoType = String(repoType || cfg?.repoType || inferred || "github").toLowerCase();
 
   if (effectiveRepoType === "azure") {
-    return await fetchAzurePullRequestDiff({ prUrl, cfg });
+    return await fetchAzurePullRequestDiff({ prUrl, cfg, payload });
   }
 
   // GitHub (existing behaviour)
-  const t = normalizeToken(token || cfg?.githubToken || cfg?.github?.token);
+  const ghSettings = getGithubSettings(cfg, payload);
+  const t = normalizeToken(token || ghSettings?.token || cfg?.githubToken);
   if (!t) throw new Error("GitHub Token is missing. Please configure it in Settings.");
 
   const { owner, repo, pull_number, apiBase } = parsePullRequestUrl(prUrl);
@@ -1435,6 +1597,74 @@ ${f.patch || ""}`)
       .join("\n");
   }
 
+  let creatorEmail = "";
+  const username = pr.user?.login;
+
+  // 1. Fetch user profile (public email)
+  if (username) {
+    try {
+      const userUrl = `${apiBase}/users/${username}`;
+      const userRes = await axios.get(userUrl, {
+        headers: {
+          Authorization: `Bearer ${t}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "AQSInspect"
+        }
+      });
+      if (userRes.data?.email) {
+        creatorEmail = userRes.data.email;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch user profile for PR creator email in fetchDiff:", err.message);
+    }
+  }
+
+  // 2. Fetch repo commits by author (guarantees email belongs to verified commits of this user)
+  if (!creatorEmail && username) {
+    try {
+      const authorCommitsUrl = `${apiBase}/repos/${owner}/${repo}/commits?author=${encodeURIComponent(username)}&per_page=5`;
+      const authorCommitsRes = await axios.get(authorCommitsUrl, {
+        headers: {
+          Authorization: `Bearer ${t}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "AQSInspect"
+        }
+      });
+      const authorCommits = authorCommitsRes.data;
+      if (Array.isArray(authorCommits)) {
+        const foundCommit = authorCommits.find(c => c.author?.login?.toLowerCase() === username.toLowerCase() && c.commit?.author?.email);
+        if (foundCommit) {
+          creatorEmail = foundCommit.commit.author.email;
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to fetch author commits for PR creator email in fetchDiff:", err.message);
+    }
+  }
+
+  // 3. Check PR commits (only matching author login)
+  if (!creatorEmail && username) {
+    try {
+      const commitsUrl = `${apiBase}/repos/${owner}/${repo}/pulls/${pull_number}/commits`;
+      const commitsRes = await axios.get(commitsUrl, {
+        headers: {
+          Authorization: `Bearer ${t}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "AQSInspect"
+        }
+      });
+      const commits = commitsRes.data;
+      if (Array.isArray(commits)) {
+        const matchingCommit = commits.find(c => c.author?.login?.toLowerCase() === username.toLowerCase() && c.commit?.author?.email);
+        if (matchingCommit) {
+          creatorEmail = matchingCommit.commit.author.email;
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to fetch commits for PR creator email in fetchDiff:", err.message);
+    }
+  }
+
   return {
     ok: true,
     apiBase,
@@ -1449,6 +1679,7 @@ ${f.patch || ""}`)
       additions: pr.additions,
       deletions: pr.deletions,
       createdBy: pr.user?.login || "unknown",
+      creatorEmail: creatorEmail || "",
       createdAt: pr.created_at,
       description: pr.body || "",
       sourceBranch: pr.head?.ref,
@@ -1942,7 +2173,7 @@ async function fetchPRFileContentHelper(payload, cfg) {
   // Azure DevOps
   // -------------------------
   if (repoType === "azure") {
-    const a = cfg?.azure || {};
+    const a = getAzureSettings(cfg, payload);
     const org = a.org;
     const project = a.project;
     const repoIdOrName = a.repoIdOrName;
@@ -2013,7 +2244,8 @@ async function fetchPRFileContentHelper(payload, cfg) {
   // -------------------------
   {
     // Token + repo info
-    const t = normalizeToken(payload?.token || cfg?.githubToken || cfg?.github?.token);
+    const ghSettings = getGithubSettings(cfg, payload);
+    const t = normalizeToken(payload?.token || ghSettings?.token || cfg?.githubToken);
     if (!t) throw new Error("GitHub Token is missing. Please configure it in Settings.");
 
     // Parse PR URL to get owner/repo/pr#
@@ -2346,7 +2578,7 @@ ipcMain.handle('user:getEmail', async (_evt, payload) => {
   try {
     if (repoType === 'azure' || !repoType) {
       // For Azure DevOps, fetch from current user
-      const a = cfg?.azure || {};
+      const a = getAzureSettings(cfg, payload);
       if (!a.org || !a.pat) {
         return { ok: false, error: 'Azure DevOps settings incomplete' };
       }
@@ -2356,8 +2588,33 @@ ipcMain.handle('user:getEmail', async (_evt, payload) => {
         Accept: 'application/json'
       };
       
+      let profileUrl = (a.baseUrl || 'https://dev.azure.com').replace(/\/+$/, '');
+      if (profileUrl.includes('dev.azure.com') || profileUrl.includes('visualstudio.com')) {
+        try {
+          const u = new URL(profileUrl);
+          const pathParts = u.pathname.split('/').filter(Boolean);
+          if (pathParts.length === 0 && a.org) {
+            profileUrl = `${profileUrl}/${encodeURIComponent(a.org)}`;
+          }
+        } catch (e) {
+          // ignore
+        }
+      } else {
+        try {
+          const u = new URL(profileUrl);
+          const tfsIdx = u.pathname.toLowerCase().indexOf('/tfs');
+          if (tfsIdx !== -1) {
+            profileUrl = `${u.origin}${u.pathname.substring(0, tfsIdx + 4)}`;
+          } else {
+            profileUrl = u.origin;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
       const res = await axios.get(
-        `${(a.baseUrl || 'https://dev.azure.com').replace(/\/+$/, '')}/_apis/profile/profiles/me?api-version=7.0`,
+        `${profileUrl}/_apis/profile/profiles/me?api-version=7.0`,
         { headers }
       );
       
@@ -2365,8 +2622,8 @@ ipcMain.handle('user:getEmail', async (_evt, payload) => {
       if (!email) return { ok: false, error: 'Email not found in Azure profile' };
       return { ok: true, email };
     } else if (repoType === 'github') {
-      // GitHub: fetch authenticated user email
-      const t = cfg?.githubToken || cfg?.github?.token;
+      const ghSettings = getGithubSettings(cfg, payload);
+      const t = ghSettings?.token || cfg?.githubToken;
       if (!t) return { ok: false, error: 'GitHub token not configured' };
       
       const res = await axios.get('https://api.github.com/user', {

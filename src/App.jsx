@@ -100,6 +100,7 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState("");
 
   const [config, setConfig] = useState(null);
+  const [selectedCustomer, setSelectedCustomer] = useState("");
   const [checkingConfig, setCheckingConfig] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -236,17 +237,31 @@ export default function App() {
     return prList.find(p => String(p.id) === String(selectedPrId)) || prMeta;
   }, [prList, selectedPrId, prMeta]);
 
+  const activeAzureRepo = useMemo(() => {
+    if (config?.multiRepo && Array.isArray(config?.azureRepos)) {
+      return config.azureRepos.find(r => r.customer === selectedCustomer) || config.azureRepos[0] || {};
+    }
+    return config?.azure || {};
+  }, [config, selectedCustomer]);
+
+  const activeGithubRepo = useMemo(() => {
+    if (config?.multiRepoGithub && Array.isArray(config?.githubRepos)) {
+      return config.githubRepos.find(r => r.customer === selectedCustomer) || config.githubRepos[0] || {};
+    }
+    return config?.github || {};
+  }, [config, selectedCustomer]);
+
   const isAcceptEnabled = useMemo(() => {
     return repoType === "azure"
-      ? config?.azure?.enableAccept !== false
-      : config?.github?.enableAccept !== false;
-  }, [config, repoType]);
+      ? activeAzureRepo?.enableAccept !== false
+      : activeGithubRepo?.enableAccept !== false;
+  }, [repoType, activeAzureRepo, activeGithubRepo]);
 
   const isRejectEnabled = useMemo(() => {
     return repoType === "azure"
-      ? config?.azure?.enableReject !== false
-      : config?.github?.enableReject !== false;
-  }, [config, repoType]);
+      ? activeAzureRepo?.enableReject !== false
+      : activeGithubRepo?.enableReject !== false;
+  }, [repoType, activeAzureRepo, activeGithubRepo]);
 
   const fileTree = useMemo(() => {
     if (!Array.isArray(actualFilesOnly)) return [];
@@ -411,6 +426,11 @@ useEffect(() => {
         const cfg = await window.api.getConfig();
         setConfig(cfg || {});
         setRepoType(cfg?.repoType || "github");
+        if (cfg?.multiRepo && Array.isArray(cfg?.azureRepos) && cfg.azureRepos.length > 0) {
+          setSelectedCustomer(cfg.selectedCustomer || cfg.azureRepos[0].customer);
+        } else if (cfg?.multiRepoGithub && Array.isArray(cfg?.githubRepos) && cfg.githubRepos.length > 0) {
+          setSelectedCustomer(cfg.selectedCustomerGithub || cfg.githubRepos[0].customer);
+        }
         await loadFeedbackMap();
       } finally {
         setCheckingConfig(false);
@@ -421,13 +441,35 @@ useEffect(() => {
   const viewMode = useMemo(() => {
     if (checkingConfig) return "loading";
     if (showSettings) return "settings";
-    const needsSetup =
-      repoType === "azure"
-        ? !(config?.azure?.org && config?.azure?.project && config?.azure?.repoIdOrName && config?.azure?.pat)
-        : !(config?.githubToken || config?.github?.token) || !(config?.github?.owner && config?.github?.repo);
+    
+    let needsSetup = false;
+    if (repoType === "azure") {
+      if (config?.multiRepo) {
+        if (!config?.azureRepos || config.azureRepos.length === 0) {
+          needsSetup = true;
+        } else {
+          const active = activeAzureRepo;
+          needsSetup = !(active?.org && active?.project && active?.repoIdOrName && active?.pat);
+        }
+      } else {
+        needsSetup = !(config?.azure?.org && config?.azure?.project && config?.azure?.repoIdOrName && config?.azure?.pat);
+      }
+    } else {
+      if (config?.multiRepoGithub) {
+        if (!config?.githubRepos || config.githubRepos.length === 0) {
+          needsSetup = true;
+        } else {
+          const active = activeGithubRepo;
+          needsSetup = !(active?.owner && active?.repo && (active?.token || config?.githubToken));
+        }
+      } else {
+        needsSetup = !(config?.githubToken || config?.github?.token) || !(config?.github?.owner && config?.github?.repo);
+      }
+    }
+    
     if (needsSetup) return "setup";
     return "main";
-  }, [checkingConfig, showSettings, config?.githubToken, config?.azure, repoType]);
+  }, [checkingConfig, showSettings, config?.githubToken, config?.azure, config?.multiRepo, config?.azureRepos, config?.multiRepoGithub, config?.githubRepos, repoType, activeAzureRepo, activeGithubRepo]);
 
   /* =============================
      PR list + diff + AI review actions
@@ -441,8 +483,8 @@ useEffect(() => {
     const effectiveFilters = { ...(overrideFilters || filters), status: "open" };
 
     if (repoType === "github") {
-      const g = config?.github || {};
-      const t = config?.githubToken || g.token;
+      const g = activeGithubRepo;
+      const t = g.token || config?.githubToken;
       if (!t) {
         setPrListLoading(false);
         setError("GitHub Token is missing. Please configure it in Settings.");
@@ -456,8 +498,8 @@ useEffect(() => {
     }
 
     if (repoType === "azure") {
-      const a = config?.azure || {};
-      if (!(a.org && a.project && a.repoIdOrName && a.pat)) {
+      const a = activeAzureRepo;
+      if (!(a?.org && a?.project && a?.repoIdOrName && a?.pat)) {
         setPrListLoading(false);
         setError("Azure DevOps settings are missing. Please configure org/project/repo/PAT in Settings.");
         return;
@@ -465,7 +507,7 @@ useEffect(() => {
     }
 
     try {
-      const res = await window.api.listPullRequests({ repoType, filters: effectiveFilters });
+      const res = await window.api.listPullRequests({ repoType, filters: effectiveFilters, customer: selectedCustomer });
       if (!res?.ok) {
         setError(res?.error || "Failed to load PRs");
         return;
@@ -508,7 +550,7 @@ useEffect(() => {
       try {
         const idOrUrl = pr?.url || id;
         if (!idOrUrl) return;
-        const det = await window.api.getPullRequestDetails({ repoType, prUrlOrId: idOrUrl });
+        const det = await window.api.getPullRequestDetails({ repoType, prUrlOrId: idOrUrl, customer: selectedCustomer });
         if (det?.ok && det.pr) setPrMeta(det.pr);
       } catch (e) {
         // ignore non-fatal
@@ -516,6 +558,82 @@ useEffect(() => {
       }
     })();
   };
+
+  const handleCustomerChange = async (cust) => {
+    setSelectedCustomer(cust);
+    setSelectedPrId('');
+    setPrList([]);
+    setPrListAll([]);
+    setPrUrl('');
+    resetPrData();
+
+    // Reset filter states and anchors
+    setFilters({ createdBy: "", createdFrom: "", createdTo: "" });
+    setActiveFilter("all");
+    setActiveFindingKey("");
+    setIssueIndex(0);
+    anchorsRef.current = [];
+    anchorKeyToIndex.current = new Map();
+    findingAnchorMapRef.current = new Map();
+    
+    try {
+      if (repoType === "azure") {
+        await window.api.saveConfig({ selectedCustomer: cust });
+        setConfig(prev => ({ ...prev, selectedCustomer: cust }));
+      } else {
+        await window.api.saveConfig({ selectedCustomerGithub: cust });
+        setConfig(prev => ({ ...prev, selectedCustomerGithub: cust }));
+      }
+    } catch (e) {
+      console.warn("Failed to persist selected customer selection:", e);
+    }
+  };
+
+  const handleRepoTypeChange = async (val) => {
+    setRepoType(val);
+    setSelectedPrId('');
+    setPrList([]);
+    setPrListAll([]);
+    setPrUrl('');
+    resetPrData();
+
+    // Reset filter states and anchors
+    setFilters({ createdBy: "", createdFrom: "", createdTo: "" });
+    setActiveFilter("all");
+    setActiveFindingKey("");
+    setIssueIndex(0);
+    anchorsRef.current = [];
+    anchorKeyToIndex.current = new Map();
+    findingAnchorMapRef.current = new Map();
+
+    // Update selectedCustomer to match the new repoType default
+    let nextCustomer = "";
+    if (val === "azure") {
+      if (config?.multiRepo && Array.isArray(config?.azureRepos) && config.azureRepos.length > 0) {
+        nextCustomer = config.selectedCustomer || config.azureRepos[0].customer;
+      }
+    } else {
+      if (config?.multiRepoGithub && Array.isArray(config?.githubRepos) && config.githubRepos.length > 0) {
+        nextCustomer = config.selectedCustomerGithub || config.githubRepos[0].customer;
+      }
+    }
+    setSelectedCustomer(nextCustomer);
+
+    try {
+      await window.api.saveConfig({ repoType: val });
+      setConfig(prev => ({ ...prev, repoType: val }));
+    } catch (e) {
+      console.warn("Failed to persist repoType selection:", e);
+    }
+  };
+
+  /* =============================
+     Auto-load PRs on repoType or selectedCustomer change
+  ============================= */
+  useEffect(() => {
+    if (checkingConfig || viewMode !== "main") return;
+    loadPRs();
+  }, [repoType, selectedCustomer, checkingConfig, viewMode]);
 
   const fetchDiff = async () => {
     resetPrData();
@@ -532,13 +650,15 @@ useEffect(() => {
     }
 
     if (repoType === "github") {
-      if (!config?.githubToken && !config?.github?.token) {
+      const g = activeGithubRepo;
+      const t = g?.token || config?.githubToken;
+      if (!t) {
         setError("GitHub Token is missing. Please configure it in Settings.");
         return;
       }
     } else {
-      const a = config?.azure || {};
-      if (!(a.org && a.project && a.repoIdOrName && a.pat)) {
+      const a = activeAzureRepo;
+      if (!(a?.org && a?.project && a?.repoIdOrName && a?.pat)) {
         setError("Azure DevOps settings are missing. Please configure org/project/repo/PAT in Settings.");
         return;
       }
@@ -546,10 +666,11 @@ useEffect(() => {
 
     try {
       setLoading(true);
-      const payload =
-        repoType === "github"
-          ? { prUrl, repoType, token: config.githubToken || config.github?.token }
-          : { prUrl: selectedPrId || prUrl, repoType };
+      const payload = {
+        prUrl: selectedPrId || prUrl,
+        repoType,
+        customer: selectedCustomer
+      };
 
       const result = await window.api.fetchPullRequestDiff(payload);
       setPrMeta(result.pr || null);
@@ -588,7 +709,7 @@ useEffect(() => {
 
     try {
       setLoading(true);
-      const payload = repoType === "github" ? { prUrl, repoType, token: config.githubToken || config.github?.token } : { prUrl: selectedPrId || prUrl, repoType };
+      const payload = repoType === "github" ? { prUrl, repoType, token: config.githubToken || config.github?.token } : { prUrl: selectedPrId || prUrl, repoType, customer: selectedCustomer };
       const result = await window.api.fetchPullRequestDiff(payload);
       if (!result?.ok && !result?.files) {
         setError(result?.error || "Failed to fetch PR diff");
@@ -622,7 +743,8 @@ useEffect(() => {
             unifiedDiff: file.patch || "",
             files: [file],
             prUrl: selectedPrId || prUrl,
-            repoType
+            repoType,
+            customer: selectedCustomer
           });
           const normalized = normalizeReview(res, [file]);
           // attach filename to findings if missing
@@ -751,26 +873,25 @@ useEffect(() => {
     }
 
     const smtpConfig = config?.email || config?.smtp;
-    if (!smtpConfig?.host || !smtpConfig?.port || !smtpConfig?.from) {
-      setError("SMTP email configuration is missing or incomplete. Please configure it in Settings.");
+    if (smtpConfig?.disabled) {
+      setError("Email sending is disabled in Settings.");
+      return;
+    }
+    if (!smtpConfig?.host || !smtpConfig?.port || !smtpConfig?.user || !smtpConfig?.pass) {
+      setError("SMTP email configuration is missing or incomplete (host, port, username, and password are required). Please configure it in Settings.");
       return;
     }
 
     try {
-      // Fetch PR details (to get developer name and PR dates)
-      const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl });
+      // Fetch PR details (to get developer name, PR dates, and creator email)
+      const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl, customer: selectedCustomer });
       const prDetails = prDetailsRes?.pr || {};
 
-      // Fetch user email from repo if 'to' is not configured
-      let toAddress = smtpConfig.to;
+      // Route primarily to the PR Creator/Author email address
+      let toAddress = prDetails.creatorEmail || prMeta?.creatorEmail;
       if (!toAddress) {
-        const emailRes = await window.api.getUserEmail({ repoType });
-        if (emailRes?.ok) {
-          toAddress = emailRes.email;
-        } else {
-          setError("Email 'to' address is not configured and could not be fetched from repository. Please configure it in Settings.");
-          return;
-        }
+        setError(`Could not resolve the email address of the PR creator (${prDetails.createdBy || prMeta?.createdBy || "unknown"}). Please ensure the PR creator has a configured email in their commits or profile.`);
+        return;
       }
 
       const subject = `Code Review: ${prDetails?.title || prMeta?.title || prUrl}`;
@@ -781,8 +902,9 @@ useEffect(() => {
         body: report,
         to: toAddress,
         from: smtpConfig.from,
-        replyTo: smtpConfig.replyTo,
-        config: smtpConfig
+        config: smtpConfig,
+        prDetails,
+        aiReview
       });
 
       if (!result?.ok) {
@@ -803,7 +925,7 @@ useEffect(() => {
       cleanPrId = parts[parts.length - 1] || 'report';
     }
 
-    let repoName = repoType === 'github' ? config?.github?.repo : config?.azure?.repoIdOrName;
+    let repoName = repoType === 'github' ? activeGithubRepo?.repo : activeAzureRepo?.repoIdOrName;
     const urlToParse = prUrl || selectedPrId || prDetails?.url || prDetails?.html_url || '';
     if (!repoName && typeof urlToParse === 'string' && urlToParse.includes('http')) {
       try {
@@ -842,7 +964,7 @@ useEffect(() => {
       return;
     }
     try {
-      const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl });
+      const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl, customer: selectedCustomer });
       const prDetails = prDetailsRes?.pr || {};
       const md = composeReviewReport(prDetails, aiReview);
       const filename = getExportFilename(prDetails, 'md');
@@ -863,7 +985,7 @@ useEffect(() => {
       return;
     }
     try {
-      const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl });
+      const prDetailsRes = await window.api.getPullRequestDetails({ repoType, prUrlOrId: selectedPrId || prUrl, customer: selectedCustomer });
       const prDetails = prDetailsRes?.pr || prMeta || {};
       const md = composeReviewReport(prDetails, aiReview);
       const filename = getExportFilename(prDetails, 'pdf');
@@ -901,7 +1023,7 @@ useEffect(() => {
     }
 
     try {
-      const res = await window.api.performPRAction({ repoType, prUrlOrId: prUrl, action });
+      const res = await window.api.performPRAction({ repoType, prUrlOrId: prUrl, action, customer: selectedCustomer });
       if (!res?.ok) {
         setError(res?.error || `Failed to ${action} PR`);
         return;
@@ -934,7 +1056,8 @@ useEffect(() => {
         unifiedDiff,
         files,
         prUrl: selectedPrId || prUrl,
-        repoType
+        repoType,
+        customer: selectedCustomer
       });
       const normalized = normalizeReview(res, files);
       setAiReview(normalized);
@@ -1100,18 +1223,43 @@ useEffect(() => {
                 className="input"
                 style={{ maxWidth: 160, flex: '0 0 auto' }}
                 value={repoType}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setRepoType(val);
-                  setSelectedPrId('');
-                  setPrList([]);
-                  setPrUrl('');
-                  resetPrData();
-                }}
+                onChange={(e) => handleRepoTypeChange(e.target.value)}
               >
                 <option value="github">GitHub</option>
                 <option value="azure">Azure DevOps</option>
               </select>
+
+              {repoType === "azure" && config?.multiRepo && Array.isArray(config?.azureRepos) && config.azureRepos.length > 0 && (
+                <select
+                  className="input"
+                  style={{ maxWidth: 180, flex: '0 0 auto', border: '1px solid var(--accent)', color: 'var(--accent-light)', fontWeight: '600' }}
+                  value={selectedCustomer}
+                  onChange={(e) => handleCustomerChange(e.target.value)}
+                  title="Select Customer Repository"
+                >
+                  {config.azureRepos.map((repo, i) => (
+                    <option key={i} value={repo.customer}>
+                      🏢 {repo.customer}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {repoType === "github" && config?.multiRepoGithub && Array.isArray(config?.githubRepos) && config.githubRepos.length > 0 && (
+                <select
+                  className="input"
+                  style={{ maxWidth: 180, flex: '0 0 auto', border: '1px solid var(--accent)', color: 'var(--accent-light)', fontWeight: '600' }}
+                  value={selectedCustomer}
+                  onChange={(e) => handleCustomerChange(e.target.value)}
+                  title="Select Customer Repository"
+                >
+                  {config.githubRepos.map((repo, i) => (
+                    <option key={i} value={repo.customer}>
+                      🏢 {repo.customer}
+                    </option>
+                  ))}
+                </select>
+              )}
 
               <select
                 className="input"
@@ -1402,9 +1550,11 @@ useEffect(() => {
                                   🔍 Details
                                 </button>
                                 
-                                <button className="btn" onClick={sendReviewEmail} style={{ fontSize: 13, height: 36, padding: '0 12px' }} title="Send Review Email">
-                                  📧 Email
-                                </button>
+                                {!config?.email?.disabled && (
+                                  <button className="btn" onClick={sendReviewEmail} style={{ fontSize: 13, height: 36, padding: '0 12px' }} title="Send Review Email">
+                                    📧 Email
+                                  </button>
+                                )}
                                 
                                 <button className="btn" onClick={exportReportPdf} style={{ fontSize: 13, height: 36, padding: '0 12px' }} title="Export PDF Report">
                                   📄 PDF
@@ -1709,7 +1859,7 @@ useEffect(() => {
                         if (!window.api?.getFileContent) {
                           throw new Error("Full file API not implemented yet (window.api.getFileContent)");
                         }
-                        return await window.api.getFileContent({ filename: file.filename, side, repoType, prUrl, selectedPrId });
+                        return await window.api.getFileContent({ filename: file.filename, side, repoType, prUrl, selectedPrId, customer: selectedCustomer });
                       }}
                     />
                   </div>
