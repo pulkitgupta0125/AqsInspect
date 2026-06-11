@@ -1,7 +1,7 @@
 {
   "name": "electron-react-bootstrap",
   "version": "1.0.0",
-  "description": "Electron + React desktop application",
+  "description": "AQS Inspect",
   "author": "Pulkit Gupta",
   "main": "electron/main.js",
   "private": true,
@@ -17,7 +17,7 @@
     "build:linux": "npm run build:react && electron-builder --linux"
   },
   "dependencies": {
-    "keytar": "^7.9.0",
+    "axios": "^1.16.1",
     "mammoth": "^1.12.0",
     "nodemailer": "^6.9.4",
     "officeparser": "^7.2.1",
@@ -36,12 +36,13 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.arcwide.electronreact",
-    "productName": "ElectronReactApp",
+    "appId": "com.arcwide.aqsinspect",
+    "productName": "AQS Inspect",
+    "copyright": "Copyright (c) 2026 Pulkit Gupta",
     "asar": true,
     "files": [
       "electron/**/*",
-      "renderer/dist/**/*",
+      "dist/**/*",
       "package.json"
     ],
     "directories": {
