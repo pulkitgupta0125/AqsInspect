@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const mammoth = require('mammoth');
-const pdfParse = require('pdf-parse');
+const { PDFParse } = require('pdf-parse');
 const officeParser = require('officeparser');
 
 /**
@@ -34,13 +34,23 @@ async function extractTextFromOffice(filePath) {
  * Extracts raw text from a PDF file using pdf-parse.
  */
 async function extractTextFromPdf(filePath) {
+  let parser;
   try {
     const dataBuffer = fs.readFileSync(filePath);
-    const data = await pdfParse(dataBuffer);
+    parser = new PDFParse({ data: dataBuffer });
+    const data = await parser.getText();
     return data.text || "";
   } catch (err) {
     console.error(`[Knowledge Base] Failed to extract PDF text from ${path.basename(filePath)}:`, err.message);
     return "";
+  } finally {
+    if (parser) {
+      try {
+        await parser.destroy();
+      } catch (destroyErr) {
+        // Ignore destruction errors
+      }
+    }
   }
 }
 

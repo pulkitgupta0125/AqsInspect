@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('api', {
   verifyMCP: () => ipcRenderer.invoke('mcp:verify'),
   saveFeedback: (payload) => ipcRenderer.invoke('review:saveFeedback', payload),
   loadFeedback: () => ipcRenderer.invoke('review:loadFeedback'),
+  generatePPTX: () => ipcRenderer.invoke('ppt:generate'),
 
   /* =============================
      DEBUG (OPTIONAL)

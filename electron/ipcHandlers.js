@@ -2827,3 +2827,27 @@ ipcMain.handle("review:loadFeedback", async () => {
     return { ok: false, error: err.message, feedback: {} };
   }
 });
+
+ipcMain.handle("ppt:generate", async () => {
+  try {
+    const { exec } = require("child_process");
+    const path = require("path");
+    const scriptPath = path.join(__dirname, "..", "scripts", "generate_pptx.py");
+    
+    return new Promise((resolve) => {
+      exec(`python "${scriptPath}"`, (error, stdout, stderr) => {
+        if (error) {
+          console.error("❌ PPT Generation failed:", error, stderr);
+          resolve({ ok: false, error: stderr || error.message });
+        } else {
+          console.log("✅ PPT Generated successfully:", stdout);
+          const outputPath = path.join(process.cwd(), "AQS_Inspect_Workflow_Presentation.pptx");
+          resolve({ ok: true, filePath: outputPath });
+        }
+      });
+    });
+  } catch (err) {
+    console.error("❌ PPT Generation error handler failed:", err);
+    return { ok: false, error: err.message };
+  }
+});
