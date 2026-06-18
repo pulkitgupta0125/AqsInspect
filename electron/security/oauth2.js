@@ -1,30 +1,7 @@
 const axios = require("axios");
 const { URLSearchParams } = require("url");
 
-function buildAuthorizationUrl({
-  authUrl,
-  clientId,
-  redirectUri,
-  scope = "openid profile email",
-  state = "",
-  responseType = "code",
-  extraParams = {}
-}) {
-  if (!authUrl || !clientId || !redirectUri) {
-    throw new Error("OAuth2 authorization URL requires authUrl, clientId, and redirectUri.");
-  }
 
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    response_type: responseType,
-    scope,
-    state,
-    ...extraParams
-  });
-
-  return `${authUrl.replace(/\/$/, "")}?${params.toString()}`;
-}
 
 async function exchangeAuthorizationCode({
   tokenUrl,
@@ -126,7 +103,6 @@ async function validateToken({
 }
 
 module.exports = {
-  buildAuthorizationUrl,
   exchangeAuthorizationCode,
   refreshToken,
   validateToken

@@ -18,8 +18,7 @@
   },
   "dependencies": {
     "axios": "^1.16.1",
-    "mammoth": "^1.12.0",
-    "nodemailer": "^6.9.4",
+    "nodemailer": "^9.0.1",
     "officeparser": "^7.2.1",
     "pdf-parse": "^2.4.5",
     "react": "^18.2.0",
@@ -39,7 +38,7 @@
     "appId": "com.arcwide.aqsinspect",
     "productName": "AQS Inspect",
     "copyright": "Copyright (c) 2026 Pulkit Gupta",
-    "asar": true,   
+    "asar": true,
     "files": [
       "electron/**/*",
       "dist/**/*",
@@ -53,7 +52,6 @@
       "main": "electron/main.js"
     },
     "win": {
-      
       "target": [
         {
           "target": "nsis",
@@ -64,14 +62,12 @@
       ],
       "icon": "assets/icon.ico"
     },
-    
- "extraResources": [
-    {
-      "from": "assets",
-      "to": "assets"
-    }
-  ],
-
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets"
+      }
+    ],
     "mac": {
       "target": "dmg",
       "icon": "assets/icon.icns"

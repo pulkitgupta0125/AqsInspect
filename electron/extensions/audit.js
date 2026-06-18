@@ -21,12 +21,7 @@ function summarizeAuditTrail({ limit = 50 } = {}) {
   return auditLog.slice(-limit);
 }
 
-function clearAuditTrail() {
-  auditLog.length = 0;
-}
-
 module.exports = {
   recordAuditEvent,
-  summarizeAuditTrail,
-  clearAuditTrail
+  summarizeAuditTrail
 };

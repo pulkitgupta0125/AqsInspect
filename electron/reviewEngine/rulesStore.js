@@ -19,38 +19,10 @@ function ensureRulesDir() {
   }
 }
 
-const DELETED_BUILTINS_FILE = path.join(RULES_DIR, '.deleted_builtins.json');
 
-function getDeletedBuiltins() {
-  if (fs.existsSync(DELETED_BUILTINS_FILE)) {
-    try {
-      return JSON.parse(fs.readFileSync(DELETED_BUILTINS_FILE, 'utf-8')) || [];
-    } catch (e) {
-      return [];
-    }
-  }
-  return [];
-}
-
-function addDeletedBuiltin(ruleId) {
-  ensureRulesDir();
-  const list = getDeletedBuiltins();
-  if (!list.includes(ruleId)) {
-    list.push(ruleId);
-    fs.writeFileSync(DELETED_BUILTINS_FILE, JSON.stringify(list, null, 2), 'utf-8');
-  }
-}
-
-const BUILTIN_RULES = [];
-
-function initializeDefaultRules() {
-  ensureRulesDir();
-}
 
 function loadAllRules() {
   ensureRulesDir();
-  // Ensure default rules exist
-  initializeDefaultRules();
 
   const rules = [];
   try {
@@ -117,9 +89,6 @@ function deleteRule(ruleId) {
   const file = path.join(RULES_DIR, `${ruleId}.json`);
   if (fs.existsSync(file)) {
     fs.unlinkSync(file);
-    if (BUILTIN_RULES.some(r => r.id === ruleId)) {
-      addDeletedBuiltin(ruleId);
-    }
     return true;
   }
   throw new Error(`Rule ${ruleId} not found`);
@@ -136,9 +105,6 @@ function deleteAllRules() {
       } catch (err) {
         console.error(`Failed to delete rule file ${file}:`, err.message);
       }
-    }
-    if (BUILTIN_RULES.some(br => br.id === r.id)) {
-      addDeletedBuiltin(r.id);
     }
   }
   return true;

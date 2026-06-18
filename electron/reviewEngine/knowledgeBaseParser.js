@@ -1,21 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const mammoth = require('mammoth');
 const { PDFParse } = require('pdf-parse');
 const officeParser = require('officeparser');
-
-/**
- * Extracts raw text from a Word (.docx) file using mammoth.
- */
-async function extractTextFromDocx(filePath) {
-  try {
-    const result = await mammoth.extractRawText({ path: filePath });
-    return result.value || "";
-  } catch (err) {
-    console.error(`[Knowledge Base] Failed to extract Word text from ${path.basename(filePath)}:`, err.message);
-    return "";
-  }
-}
 
 /**
  * Extracts raw text from Office documents (DOCX, PPTX, XLSX) using officeparser.

@@ -21,10 +21,6 @@ function buildHeaders(config = {}) {
   return headers;
 }
 
-function buildUrl(baseUrl, path = "") {
-  if (!baseUrl) throw new Error("Base OData/REST URL is required.");
-  return `${baseUrl.replace(/\/$/, "")}/${String(path).replace(/^\//, "")}`;
-}
 
 function resolveMetadataUrls(config = {}) {
   const metadataUrl = String(config.metadataUrl || "").trim();
@@ -220,54 +216,6 @@ async function fetchMetadata(config = {}) {
   throw lastError;
 }
 
-async function fetchEntitySet(config = {}, entitySet, query = "") {
-  if (!entitySet) {
-    throw new Error("Entity set is required.");
-  }
-
-  const url = buildUrl(config.odataUrl, `${entitySet}${query ? `?${query.replace(/^\?/, "")}` : ""}`);
-  
-  try {
-    const res = await executeODataRequest(url, "GET", null, config);
-    return { url, status: res.status, data: res.data };
-  } catch (err) {
-    const error = new Error(err.message);
-    error.requestUrl = url;
-    error.requestHeaders = { Accept: "application/json", Authorization: config.accessToken ? "[REDACTED]" : undefined };
-    error.responseStatus = err.response?.status;
-    error.responseData = err.response?.data;
-    throw error;
-  }
-}
-
-async function fetchRestResource(config = {}, resourcePath, params = {}) {
-  if (!resourcePath) {
-    throw new Error("REST resource path is required.");
-  }
-
-  let url = buildUrl(config.restUrl, resourcePath);
-  if (params && Object.keys(params).length > 0) {
-    const qs = new URLSearchParams(params);
-    url = `${url}?${qs.toString()}`;
-  }
-  
-  try {
-    const res = await executeODataRequest(url, "GET", null, config);
-    return { url, status: res.status, data: res.data };
-  } catch (err) {
-    const error = new Error(err.message);
-    error.requestUrl = url;
-    error.requestHeaders = { Accept: "application/json", Authorization: config.accessToken ? "[REDACTED]" : undefined };
-    error.responseStatus = err.response?.status;
-    error.responseData = err.response?.data;
-    throw error;
-  }
-}
-
 module.exports = {
-  buildHeaders,
-  buildUrl,
-  fetchMetadata,
-  fetchEntitySet,
-  fetchRestResource
+  fetchMetadata
 };

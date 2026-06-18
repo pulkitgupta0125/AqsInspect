@@ -12,42 +12,7 @@ const oauth2 = require("./security/oauth2");
 const prDetailsCache = new Map();
 
 // -----------------------------
-// Config persistence (FULL MERGE)
-// -----------------------------
-const CONFIG_FILE = path.join(app.getPath("userData"), "config.json");
-
-
-
-function readConfigFile() {
-  try {
-    if (!fs.existsSync(CONFIG_FILE)) return {};
-    return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
-  } catch (e) {
-    console.error("❌ readConfigFile failed:", e.message);
-    return {};
-  }
-}
-
-function writeConfigFile(obj) {
-  try {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(obj, null, 2), "utf-8");
-    return true;
-  } catch (e) {
-    console.error("❌ writeConfigFile failed:", e.message);
-    return false;
-  }
-}
-
-function mergeConfig(existing, incoming) {
-  return {
-    ...existing,
-    ...incoming,
-    llm: {
-      ...(existing.llm || {}),
-      ...(incoming.llm || {})
-    }
-  };
-}
+// Config persistence is imported from configStore
 
 // -----------------------------
 // Helpers
@@ -124,11 +89,8 @@ function extractJson(text) {
 }
 
 function getLLMConfigSafe() {
-  // Prefer your existing getLLMConfig if present
   if (typeof store.getLLMConfig === "function") return store.getLLMConfig();
-
-  // fallback: read from config.json
-  const cfg = readConfigFile();
+  const cfg = store.getConfig();
   return cfg.llm || {};
 }
 
@@ -220,20 +182,17 @@ ipcMain.handle("app:ping", async () => "pong from main");
 // IPC: Config (the API your UI should use)
 // -----------------------------
 ipcMain.handle("config:get", async () => {
-  // Your configStore.getConfig() reads the same config.json path; use it if available
-  if (typeof store.getConfig === "function") return store.getConfig();
-  return readConfigFile();
+  return store.getConfig();
 });
 
 ipcMain.handle("config:save", async (_evt, data) => {
-  const existing = readConfigFile();
-  const merged = mergeConfig(existing, data || {});
-  const ok = writeConfigFile(merged);
+  const ok = store.saveConfig(data);
   return { ok };
 });
 
 ipcMain.handle("config:clear", async () => {
   try {
+    const CONFIG_FILE = path.join(app.getPath("userData"), "config.json");
     if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE);
     return { ok: true };
   } catch (e) {
@@ -1565,7 +1524,7 @@ ipcMain.handle("pr:fetchDiff", async (_evt, payload) => {
   const { prUrl, token, repoType } = payload || {};
   if (!prUrl) throw new Error("PR URL is required");
 
-  const cfg = store.getConfig ? store.getConfig() : readConfigFile();
+  const cfg = store.getConfig();
   const inferred = isAzureDevOpsPrUrl(prUrl) ? "azure" : "github";
   const effectiveRepoType = String(repoType || cfg?.repoType || inferred || "github").toLowerCase();
 
@@ -2432,7 +2391,7 @@ async function fetchPRFileContentHelper(payload, cfg) {
 // side: "new" (latest/head) | "old" (base)
 // =============================
 ipcMain.handle("file:getContent", async (_evt, payload) => {
-  const cfg = store.getConfig ? store.getConfig() : readConfigFile();
+  const cfg = store.getConfig();
   return await fetchPRFileContentHelper(payload, cfg);
 });
 

@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const store = require('../configStore');
 const rulesStore = require('./rulesStore');
-const { buildDynamicRulesFromIfsCore } = require('./dynamicRuleBuilder');
+
 
 function evaluateRulesForFile(file, findings = [], content = "", prFiles = []) {
   const cfg = (store && typeof store.getConfig === 'function') ? store.getConfig() : {};
@@ -70,21 +70,6 @@ function evaluateRulesForFile(file, findings = [], content = "", prFiles = []) {
   return fileFindings;
 }
 
-function mergeAIAndRuleFindings(aiFindings = [], ruleFindings = []) {
-  const normalized = [...aiFindings];
-
-  for (const ruleFinding of ruleFindings) {
-    const duplicate = normalized.some(
-      (finding) => finding.ruleId === ruleFinding.ruleId && finding.title === ruleFinding.title
-    );
-    if (!duplicate) {
-      normalized.push(ruleFinding);
-    }
-  }
-
-  return normalized;
-}
-
 function validatePRImpact(prDetails = {}, ifsMetadata = {}) {
   const findings = [];
   const cfg = (store && typeof store.getConfig === 'function') ? store.getConfig() : {};
@@ -107,6 +92,5 @@ function validatePRImpact(prDetails = {}, ifsMetadata = {}) {
 
 module.exports = {
   evaluateRulesForFile,
-  mergeAIAndRuleFindings,
   validatePRImpact
 };

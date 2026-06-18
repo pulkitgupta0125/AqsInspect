@@ -68,6 +68,5 @@ function addReviewToMemory(filePath, codeSnippet, findings) {
 }
 
 module.exports = {
-  loadMemory,
   addReviewToMemory
 };
