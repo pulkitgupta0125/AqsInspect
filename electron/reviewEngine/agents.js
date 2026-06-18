@@ -354,11 +354,24 @@ async function delegateReview(file, content, llmConfig, llmPostFunction, prFiles
 
   let knowledgeContext = "";
   if (enableKnowledgeBase && knowledgePath) {
+    // 1. If docs.ifs.com search is enabled, retrieve and inject relevant documentation matches
+    const enableIfsDocsSearch = cfg?.mcp?.enableIfsDocsSearch || false;
+    const ifsDocsVersion = cfg?.mcp?.ifsDocsVersion || "26r1";
+    if (enableIfsDocsSearch) {
+      try {
+        const { searchAndInjectDocs } = require("./ifsDocsScraper");
+        await searchAndInjectDocs(file.path || file.filename || "", context.category, content, knowledgePath, ifsDocsVersion, 5, llmConfig, llmPostFunction);
+      } catch (scrapErr) {
+        console.warn("Failed to search and inject docs from docs.ifs.com:", scrapErr.message);
+      }
+    }
+
+    // 2. Fetch relevant guidelines from the RAG database
     try {
-      const { loadKnowledgeBase } = require("./knowledgeBaseParser");
-      knowledgeContext = await loadKnowledgeBase(knowledgePath);
+      const { getRelevantGuidelines } = require("./ragDatabase");
+      knowledgeContext = await getRelevantGuidelines(knowledgePath, content, file, context.category);
     } catch (err) {
-      console.warn("Failed to load knowledge base files:", err.message);
+      console.warn("Failed to retrieve relevant guidelines from RAG database:", err.message);
     }
   }
 

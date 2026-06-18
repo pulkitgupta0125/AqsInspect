@@ -39,7 +39,7 @@
     "appId": "com.arcwide.aqsinspect",
     "productName": "AQS Inspect",
     "copyright": "Copyright (c) 2026 Pulkit Gupta",
-    "asar": true,
+    "asar": true,   
     "files": [
       "electron/**/*",
       "dist/**/*",
@@ -53,6 +53,7 @@
       "main": "electron/main.js"
     },
     "win": {
+      
       "target": [
         {
           "target": "nsis",
@@ -63,6 +64,14 @@
       ],
       "icon": "assets/icon.ico"
     },
+    
+ "extraResources": [
+    {
+      "from": "assets",
+      "to": "assets"
+    }
+  ],
+
     "mac": {
       "target": "dmg",
       "icon": "assets/icon.icns"

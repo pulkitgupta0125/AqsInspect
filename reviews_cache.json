@@ -27,5 +27,44 @@
       "cached": false
     },
     "timestamp": "2026-06-10T13:27:04.048Z"
+  },
+  "56de0c7f35d8426a211a8f8cdc399e02c98d0bf30284ba2997e91f39b913bfe9": {
+    "review": {
+      "findings": [
+        {
+          "severity": "Major",
+          "title": "Inappropriate Data Type for Balance Calculation",
+          "explanation": "The variable v_cust_balance is declared as VARCHAR2, which is inappropriate for mathematical operations. This can lead to runtime errors or incorrect calculations if the data is not convertible to a number.",
+          "recommendation": "Change the data type of v_cust_balance to NUMBER to ensure proper arithmetic operations. IFS-Recommended Approach: Use NUMBER for financial calculations.",
+          "matchText": "v_cust_balance VARCHAR2(100);",
+          "line": 6,
+          "ruleId": "IFS_AQS",
+          "classification": "ORACLE"
+        },
+        {
+          "severity": "Blocker",
+          "title": "Missing Exit Condition in Loop",
+          "explanation": "The loop fetching from the cursor lacks an exit condition, which can lead to an infinite loop if there are no more rows to fetch. This will cause the program to hang and consume resources indefinitely.",
+          "recommendation": "Add an exit condition to the loop after the FETCH statement to handle the case when no more rows are available. IFS-Recommended Approach: Use EXIT WHEN c_customers%NOTFOUND; after the FETCH statement.",
+          "matchText": "LOOP\n        FETCH c_customers INTO v_cust_id, v_cust_balance;",
+          "line": 9,
+          "ruleId": "IFS_AQS",
+          "classification": "ORACLE"
+        }
+      ],
+      "context": {
+        "category": "plsql",
+        "detectedVersion": "Hybrid/Unknown",
+        "isCloud": false,
+        "isApps10OrLower": false,
+        "lineCount": 39
+      },
+      "rules": {
+        "count": 0,
+        "summary": ""
+      },
+      "cached": false
+    },
+    "timestamp": "2026-06-16T18:52:40.286Z"
   }
 }

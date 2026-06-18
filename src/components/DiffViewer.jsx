@@ -271,7 +271,7 @@ function InlineComment({ finding, file }) {
                   <>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                       <span style={{ fontSize: 11, fontWeight: "bold", color: "#4f46e5" }}>AI SUGGESTED FIX:</span>
-                      <button 
+                      <button
                         onClick={() => {
                           navigator.clipboard.writeText(fix.suggestedFix);
                           alert("Fix copied to clipboard!");
@@ -385,8 +385,8 @@ const commentStyles = {
   pre: {
     fontFamily: 'Consolas, Monaco, "Andale Mono", monospace',
     fontSize: 12,
-    background: "#0f172a",
-    color: "#f8fafc",
+    background: "#fffff",
+    color: "000000",
     padding: 10,
     borderRadius: 6,
     overflowX: "auto",
@@ -443,7 +443,34 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
 
   const surfaceRef = useRef(null);
   const toolbarRef = useRef(null);
+  const [dividerPos, setDividerPos] = useState(50);
+  const isDragging = useRef(false);
+  useEffect(() => {
+    const handleMove = (e) => {
+      if (!isDragging.current) return;
 
+      const rect = surfaceRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const percent = ((e.clientX - rect.left) / rect.width) * 100;
+
+      if (percent > 10 && percent < 90) {
+        setDividerPos(percent);
+      }
+    };
+
+    const handleUp = () => {
+      isDragging.current = false;
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, []);
   const [showFull, setShowFull] = useState(false);
   const [fullText, setFullText] = useState("");
   const [fullLoading, setFullLoading] = useState(false);
@@ -534,242 +561,285 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
 
   return (
     <>
-    <div ref={surfaceRef} className={`diff-surface az mode-${mode}`}>
-      <div className="sticky file-header">{file.filename}</div>
+      <div ref={surfaceRef} className={`diff-surface az mode-${mode}`}>
+        <div className="sticky file-header">{file.filename}</div>
 
-      <div className="diff-toolbar sticky" ref={toolbarRef}>
-        <div className="diff-toolbar__left">
-          <div className="segmented-control" style={toolbarStyles.segmentedGroup}>
-            {[
-              { id: "inline", label: "Unified" },
-              { id: "side", label: "Split" },
-              { id: "modified", label: "Changes Only" }
-            ].map((btn) => (
-              <button
-                key={btn.id}
-                onClick={() => setMode(btn.id)}
+        <div className="diff-toolbar sticky" ref={toolbarRef}>
+          <div className="diff-toolbar__left">
+            <div className="segmented-control" style={toolbarStyles.segmentedGroup}>
+              {[
+                { id: "inline", label: "Unified" },
+                { id: "side", label: "Split" },
+                { id: "modified", label: "Changes Only" }
+              ].map((btn) => (
+                <button
+                  key={btn.id}
+                  onClick={() => setMode(btn.id)}
+                  style={{
+                    ...toolbarStyles.segmentedBtn,
+                    ...(mode === btn.id ? toolbarStyles.segmentedBtnActive : {})
+                  }}
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="diff-toolbar__right">
+            <span className="diff-toolbar__badge">{status.toUpperCase()}</span>
+            <span className="diff-toolbar__stats">+{file.additions || 0} / -{file.deletions || 0}</span>
+            <span className="diff-toolbar__stats">Findings: {findingsCount}</span>
+
+            {showFull && (
+              <button className="btn primary" onClick={() => setFullScreenMode(true)} title="View in full screen">
+                ⛶ Full Screen
+              </button>
+            )}
+
+            {onRequestFullFile && (
+              <>
+                <button className="btn primary" onClick={() => requestFullLatest("old")}>View base</button>
+                <button className="btn primary" onClick={() => requestFullLatest("new")}>View latest</button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {showFull && (
+          <div className="az-fullpanel">
+            <div className="az-fullpanel__hdr">
+              <b>Full file content</b>
+              <button className="btn primary" onClick={() => setShowFull(false)}>
+                Close
+              </button>
+            </div>
+
+            {fullLoading && (
+              <div className="muted" style={{ marginTop: 8 }}>
+                Loading…
+              </div>
+            )}
+
+            {fullError && (
+              <div className="error" style={{ marginTop: 8 }}>
+                {fullError}
+              </div>
+            )}
+
+            {!fullLoading && !fullError && <pre className="az-fullpanel__pre">{fullText || "(empty)"}</pre>}
+          </div>
+        )}
+
+        {status === "added" && addedFull && <pre className="az-addedfile">{addedFull}</pre>}
+
+        {status !== "added" && omitted && !showFull && (
+          <div className="empty" style={{ padding: 12 }}>
+            Diff is not available (omitted/truncated).
+            {onRequestFullFile ? (
+              <>
+                {" "}
+                Auto-loading full file… If it doesn’t appear, use <b>View latest</b> / <b>View base</b>.
+              </>
+            ) : (
+              <>
+                {" "}
+                Wire <b>onRequestFullFile</b> to enable full-file loading.
+              </>
+            )}
+          </div>
+        )}
+
+        {!omitted && status !== "added" && (
+          <>
+            {/* ✅ INLINE MODE (UNCHANGED) */}
+            {mode === "inline" ? (
+              <table className="diff-table mode-inline">
+                <tbody>
+                  {toRenderHunks.map((h, hIdx) => {
+                    const pairedAll = buildSplitRowsFromHunk(h.header, h.lines);
+
+                    const rows = [];
+
+                    rows.push(
+                      <tr key={`h-${hIdx}`}>
+                        <td colSpan={3} className="hunk-header-cell">
+                          {h.header}
+                        </td>
+                      </tr>
+                    );
+
+                    pairedAll.forEach((r, idx) => {
+                      const marker =
+                        r.kind === "add" ? "+" : r.kind === "del" ? "-" : " ";
+                      const text =
+                        r.kind === "del"
+                          ? r.left || ""
+                          : r.right || r.left || "";
+
+                      rows.push(
+                        <tr key={`${hIdx}-${idx}`} className={`inline-row ${r.kind}`}>
+                          <td>{r.oldNo ?? ""}</td>
+                          <td>{r.newNo ?? ""}</td>
+                          <td>
+                            {marker} {text}
+                          </td>
+                        </tr>
+                      );
+                    });
+
+                    return rows;
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              /* ✅ SPLIT + MODIFIED RESIZABLE VIEW */
+              <div
                 style={{
-                  ...toolbarStyles.segmentedBtn,
-                  ...(mode === btn.id ? toolbarStyles.segmentedBtnActive : {})
+                  display: "flex",
+                  width: "100%",
+                  height: "100%",
+                  position: "relative"
                 }}
               >
-                {btn.label}
-              </button>
-            ))}
-          </div>
-        </div>
+                {/* ✅ LEFT PANEL */}
+                <div
+                  style={{
+                    width: `${dividerPos}%`,
+                    overflow: "auto",
+                    borderRight: "1px solid #e2e8f0"
+                  }}
+                >
+                  <table className="diff-table">
+                    <tbody>
+                      {toRenderHunks.map((h, hIdx) => {
+                        const pairedAll = buildSplitRowsFromHunk(h.header, h.lines);
 
-        <div className="diff-toolbar__right">
-          <span className="diff-toolbar__badge">{status.toUpperCase()}</span>
-          <span className="diff-toolbar__stats">+{file.additions || 0} / -{file.deletions || 0}</span>
-          <span className="diff-toolbar__stats">Findings: {findingsCount}</span>
+                        const paired =
+                          mode === "modified"
+                            ? pairedAll.filter((r) => r.kind !== "ctx")
+                            : pairedAll;
 
-          {showFull && (
-            <button className="btn" onClick={() => setFullScreenMode(true)} title="View in full screen">
-              ⛶ Full Screen
-            </button>
-          )}
+                        const rows = [];
 
-          {onRequestFullFile && (
-            <>
-              <button className="btn" onClick={() => requestFullLatest("old")}>View base</button>
-              <button className="btn primary" onClick={() => requestFullLatest("new")}>View latest</button>
-            </>
-          )}
-        </div>
+                        rows.push(
+                          <tr key={`L-h-${hIdx}`}>
+                            <td colSpan={2} className="hunk-header-cell">
+                              {h.header}
+                            </td>
+                          </tr>
+                        );
+
+                        paired.forEach((r, i) => {
+                          rows.push(
+                            <tr key={`L-${hIdx}-${i}`} className={`split-row ${r.kind}`}>
+                              <td className="split-ln-cell old">
+                                {r.oldNo ?? ""}
+                              </td>
+                              <td className={`split-code-cell old ${r.kind}`}>
+                                {r.left ? r.left.slice(1) : ""}
+                              </td>
+                            </tr>
+                          );
+                        });
+
+                        return rows;
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* ✅ DRAG DIVIDER */}
+                <div
+                  onMouseDown={() => (isDragging.current = true)}
+                  style={{
+                    width: "6px",
+                    cursor: "col-resize",
+                    background: isDragging.current ? "#6366f1" : "#cbd5f5",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 10
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "2px",
+                      height: "20px",
+                      background: "#6366f1"
+                    }}
+                  />
+                </div>
+
+                {/* ✅ RIGHT PANEL */}
+                <div
+                  style={{
+                    width: `${100 - dividerPos}%`,
+                    overflow: "auto"
+                  }}
+                >
+                  <table className="diff-table">
+                    <tbody>
+                      {toRenderHunks.map((h, hIdx) => {
+                        const pairedAll = buildSplitRowsFromHunk(h.header, h.lines);
+
+                        const paired =
+                          mode === "modified"
+                            ? pairedAll.filter((r) => r.kind !== "ctx")
+                            : pairedAll;
+
+                        const rows = [];
+
+                        rows.push(
+                          <tr key={`R-h-${hIdx}`}>
+                            <td colSpan={2} className="hunk-header-cell">
+                              {h.header}
+                            </td>
+                          </tr>
+                        );
+
+                        paired.forEach((r, i) => {
+                          rows.push(
+                            <tr key={`R-${hIdx}-${i}`} className={`split-row ${r.kind}`}>
+                              <td className="split-ln-cell new">
+                                {r.newNo ?? ""}
+                              </td>
+                              <td className={`split-code-cell new ${r.kind}`}>
+                                {r.right ? r.right.slice(1) : ""}
+                              </td>
+                            </tr>
+                          );
+                        });
+
+                        return rows;
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
-      {showFull && (
-        <div className="az-fullpanel">
-          <div className="az-fullpanel__hdr">
-            <b>Full file content</b>
-            <button className="btn" onClick={() => setShowFull(false)}>
-              Close
-            </button>
-          </div>
-
-          {fullLoading && (
-            <div className="muted" style={{ marginTop: 8 }}>
-              Loading…
+      {fullScreenMode && (
+        <div className="fullscreen-overlay">
+          <div className="fullscreen-container">
+            <div className="fullscreen-header">
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div className="fullscreen-title">{file.filename}</div>
+                <div className="muted" style={{ fontSize: 12 }}>Full file source code view</div>
+              </div>
+              <button className="btn" onClick={() => setFullScreenMode(false)}>✖ Close</button>
             </div>
-          )}
-
-          {fullError && (
-            <div className="error" style={{ marginTop: 8 }}>
-              {fullError}
+            <div className="fullscreen-body">
+              {fullLoading && <div className="muted">Loading…</div>}
+              {fullError && <div className="error">{fullError}</div>}
+              {!fullLoading && !fullError && <pre className="fullscreen-pre">{fullText || "(empty)"}</pre>}
             </div>
-          )}
-
-          {!fullLoading && !fullError && <pre className="az-fullpanel__pre">{fullText || "(empty)"}</pre>}
-        </div>
-      )}
-
-      {status === "added" && addedFull && <pre className="az-addedfile">{addedFull}</pre>}
-
-      {status !== "added" && omitted && !showFull && (
-        <div className="empty" style={{ padding: 12 }}>
-          Diff is not available (omitted/truncated).
-          {onRequestFullFile ? (
-            <>
-              {" "}
-              Auto-loading full file… If it doesn’t appear, use <b>View latest</b> / <b>View base</b>.
-            </>
-          ) : (
-            <>
-              {" "}
-              Wire <b>onRequestFullFile</b> to enable full-file loading.
-            </>
-          )}
-        </div>
-      )}
-
-      {!omitted && status !== "added" && (
-        <table className={`diff-table mode-${mode}`}>
-          {mode !== "inline" && (
-            <thead>
-              <tr className="split-head-row">
-                <th colSpan={2} className="coltitle-cell" style={{ textAlign: "center", textTransform: "uppercase", padding: "6px 12px", fontSize: "11px", color: "var(--text-dim)", background: "var(--surface-alt)", borderBottom: "1px solid var(--border-light)" }}>Old</th>
-                <th colSpan={2} className="coltitle-cell" style={{ textAlign: "center", textTransform: "uppercase", padding: "6px 12px", fontSize: "11px", color: "var(--text-dim)", background: "var(--surface-alt)", borderBottom: "1px solid var(--border-light)" }}>New</th>
-              </tr>
-            </thead>
-          )}
-          <tbody>
-            {toRenderHunks.map((h, hIdx) => {
-              const pairedAll = buildSplitRowsFromHunk(h.header, h.lines).map((r, idx) => ({ ...r, origIndex: idx }));
-              const paired = mode === "modified" ? pairedAll.filter((r) => r.kind !== "ctx") : pairedAll;
-
-              let displayItems;
-              if (mode === "modified") {
-                displayItems = paired.map((row) => ({ type: "row", row }));
-              } else {
-                displayItems = buildSmartCollapsedItems(paired, hIdx, expandedFolds);
-              }
-
-              const rows = [];
-
-              // Hunk header row
-              rows.push(
-                <tr key={`hunk-hdr-${hIdx}`} className="hunk-header-row">
-                  <td colSpan={mode === "inline" ? 3 : 4} className="hunk-header-cell">
-                    {h.header}
-                  </td>
-                </tr>
-              );
-
-              displayItems.forEach((item, idx) => {
-                if (item.type === "fold") {
-                  rows.push(
-                    <tr key={`fold-${item.foldId}-${idx}`} className="fold-row">
-                      <td colSpan={mode === "inline" ? 3 : 4} className="fold-cell">
-                        <button className="fold-btn" onClick={() => toggleFold(item.foldId)}>
-                          Show {item.count} unchanged lines
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                  return;
-                }
-
-                const r = item.row;
-                const joined = `${r.left || ""}\n${r.right || ""}`;
-                const joinedNorm = normalize(joined);
-
-                const matched = findingsForFile.filter((f) => {
-                  const mt = String(f?.matchText || "").trim();
-                  if (!mt) return false;
-                  const mNorm = normalize(mt);
-                  if (!mNorm) return false;
-                  return joinedNorm.includes(mNorm) || (mNorm.length >= 12 && joinedNorm.includes(mNorm.slice(0, 24)));
-                });
-
-                if (mode === "inline") {
-                  const marker = r.kind === "add" ? "+" : r.kind === "del" ? "-" : " ";
-                  const text = r.kind === "del" ? r.left || "" : r.right || r.left || "";
-
-                  rows.push(
-                    <tr key={`in-${hIdx}-${r.origIndex}-${idx}`} className={`inline-row ${r.kind}`}>
-                      <td className="inline-ln-cell">{r.oldNo ?? ""}</td>
-                      <td className="inline-ln-cell">{r.newNo ?? ""}</td>
-                      <td className={`inline-code-cell ${r.kind}`}>
-                        <span className="inline-marker">{marker}</span>
-                        <span className="inline-text">{text}</span>
-                      </td>
-                    </tr>
-                  );
-
-                  matched.forEach((f, fIdx) => {
-                    rows.push(
-                      <tr key={`in-c-${fIdx}`} className="comment-row">
-                        <td colSpan={3} className="comment-cell">
-                          <InlineComment finding={f} file={file} />
-                        </td>
-                      </tr>
-                    );
-                  });
-                } else {
-                  const leftText = r.left ? r.left.slice(1) : "";
-                  const rightText = r.right ? r.right.slice(1) : "";
-
-                  rows.push(
-                    <tr key={`${hIdx}-${r.origIndex}-${idx}`} className={`split-row ${r.kind}`}>
-                      <td className="split-ln-cell old">{r.oldNo ?? ""}</td>
-                      <td className={`split-code-cell old ${r.kind}`}>
-                        {leftText}
-                      </td>
-                      <td className="split-ln-cell new">{r.newNo ?? ""}</td>
-                      <td className={`split-code-cell new ${r.kind}`}>
-                        {rightText}
-                      </td>
-                    </tr>
-                  );
-
-                  if (r.noNewline) {
-                    rows.push(
-                      <tr key={`no-newline-${hIdx}-${r.origIndex}`} className="no-newline-row">
-                        <td colSpan={4} className="no-newline-cell">
-                          \ No newline at end of file
-                        </td>
-                      </tr>
-                    );
-                  }
-
-                  matched.forEach((f, fIdx) => {
-                    rows.push(
-                      <tr key={`c-${fIdx}`} className="comment-row">
-                        <td colSpan={4} className="comment-cell">
-                          <InlineComment finding={f} file={file} />
-                        </td>
-                      </tr>
-                    );
-                  });
-                }
-              });
-
-              return rows;
-            })}
-          </tbody>
-        </table>
-      )}
-    </div>
-
-    {fullScreenMode && (
-      <div className="fullscreen-overlay">
-        <div className="fullscreen-container">
-          <div className="fullscreen-header">
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div className="fullscreen-title">{file.filename}</div>
-              <div className="muted" style={{ fontSize: 12 }}>Full file source code view</div>
-            </div>
-            <button className="btn" onClick={() => setFullScreenMode(false)}>✖ Close</button>
-          </div>
-          <div className="fullscreen-body">
-            {fullLoading && <div className="muted">Loading…</div>}
-            {fullError && <div className="error">{fullError}</div>}
-            {!fullLoading && !fullError && <pre className="fullscreen-pre">{fullText || "(empty)"}</pre>}
           </div>
         </div>
-      </div>
-    )}
+      )}
     </>
   );
 }

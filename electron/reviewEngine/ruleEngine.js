@@ -53,7 +53,9 @@ function evaluateRulesForFile(file, findings = [], content = "", prFiles = []) {
               recommendation: rule.recommendation || "Follow IFS guidelines to remediate.",
               lineRange: null,
               matchText: null,
-              classification: rule.classification || "IFS_ERP"
+              classification: rule.classification || "IFS_ERP",
+              subcategory: rule.subcategory,
+              tags: rule.tags
             });
           }
         } catch (regexError) {

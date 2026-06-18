@@ -4,21 +4,21 @@
     "codeSnippet": "SET SERVEROUTPUT ON;\n\nDECLARE\n    -- Cursor to find active customers\n    CURSOR c_customers IS \n        SELECT customer_id, balance FROM customers WHERE status = 'ACTIVE';\n        \n    v_cust_id      NUMBER;\n    v_cust_balance VARCHAR2(100); -- BUG 1: Why is this a string for a math operation?\n    v_bonus_amount NUMBER;\nBEGIN\n    OPEN c_customers;\n    \n    LOOP\n        FETCH c_customers INTO v_cust_id, v_cust_balance;\n        \n        -- Calculate 5% bonus\n        v_bonus_amount := v_cust_balance * 0.05;\n\n        UPDATE customers \n        SET balance = balance + v_bonus_amount\n        WHERE customer_id = v_cust_id;\n\n        -- BUG 2: Where is the exit condition?\n        DBMS_OUTPUT.PUT_LINE('Processed ID: ' || v_cust_id);\n    END LOOP;\n\n    CLOSE c_customers;\n    COMMIT;\n    \nEXCEPTION\n    WHEN OTHERS THEN\n        IF c_customers%ISOPEN THEN\n            CLOSE c_customers;\n        END IF;\n        ROLLBACK;\n        DBMS_OUTPUT.PUT_LINE('Error: ' || SQLERRM);\nEND;\n/",
     "findings": [
       {
-        "title": "Incorrect data type for customer balance",
-        "severity": "Blocker",
-        "explanation": "The variable v_cust_balance is declared as VARCHAR2, which is inappropriate for mathematical operations. This can lead to runtime errors or unexpected behavior when performing arithmetic calculations.",
-        "recommendation": "Change the data type of v_cust_balance to NUMBER to ensure proper calculations. IFS-Recommended Approach: Always use appropriate data types for variables based on their intended use.",
+        "title": "Inappropriate Data Type for Balance Calculation",
+        "severity": "Major",
+        "explanation": "The variable v_cust_balance is declared as VARCHAR2, which is inappropriate for mathematical operations. This can lead to runtime errors or incorrect calculations if the data is not convertible to a number.",
+        "recommendation": "Change the data type of v_cust_balance to NUMBER to ensure proper arithmetic operations. IFS-Recommended Approach: Use NUMBER for financial calculations.",
         "ruleId": "IFS_AQS"
       },
       {
-        "title": "Missing exit condition in loop",
+        "title": "Missing Exit Condition in Loop",
         "severity": "Blocker",
-        "explanation": "The loop does not have an exit condition, which can lead to an infinite loop if the cursor fetches no rows. This can cause the database session to hang and consume resources indefinitely.",
-        "recommendation": "Add an exit condition to the loop, such as checking for the NOT FOUND condition after the FETCH statement. IFS-Recommended Approach: Always ensure loops have a clear exit condition to prevent infinite loops.",
+        "explanation": "The loop fetching from the cursor lacks an exit condition, which can lead to an infinite loop if there are no more rows to fetch. This will cause the program to hang and consume resources indefinitely.",
+        "recommendation": "Add an exit condition to the loop after the FETCH statement to handle the case when no more rows are available. IFS-Recommended Approach: Use EXIT WHEN c_customers%NOTFOUND; after the FETCH statement.",
         "ruleId": "IFS_AQS"
       }
     ],
-    "timestamp": "2026-06-10T12:51:12.753Z"
+    "timestamp": "2026-06-16T18:52:40.300Z"
   },
   {
     "filePath": "test.plsql",

@@ -2226,6 +2226,53 @@ ipcMain.handle("mcp:getAuditTrail", async () => {
   }
 });
 
+ipcMain.handle("mcp:analyseKB", async (_evt, payload) => {
+  const { knowledgePath } = payload || {};
+  if (!knowledgePath) {
+    return { ok: false, error: "Knowledge Path is required" };
+  }
+
+  const fs = require("fs");
+  const path = require("path");
+  
+  if (!fs.existsSync(knowledgePath)) {
+    return { ok: false, error: "Folder does not exist or is inaccessible." };
+  }
+
+  try {
+    const stat = fs.statSync(knowledgePath);
+    if (!stat.isDirectory()) {
+      return { ok: false, error: "Path is not a directory." };
+    }
+
+    const files = fs.readdirSync(knowledgePath);
+    const validExtensions = new Set([".txt", ".md", ".docx", ".pptx", ".xlsx", ".pdf"]);
+    const validFiles = files.filter(f => {
+      const fullPath = path.join(knowledgePath, f);
+      try {
+        const fstat = fs.statSync(fullPath);
+        return fstat.isFile() && validExtensions.has(path.extname(f).toLowerCase());
+      } catch (err) {
+        return false;
+      }
+    });
+
+    if (validFiles.length === 0) {
+      return { ok: false, error: "Folder is empty or contains no supported files (.docx, .pdf, .txt, .md)." };
+    }
+
+    const { indexKnowledgeBaseIfNeeded } = require("./reviewEngine/ragDatabase");
+    const db = await indexKnowledgeBaseIfNeeded(knowledgePath);
+    if (db && db.chunks && db.chunks.length > 0) {
+      return { ok: true, count: validFiles.length, chunks: db.chunks.length };
+    } else {
+      return { ok: false, error: "No guideline chunks could be extracted from files." };
+    }
+  } catch (err) {
+    return { ok: false, error: `Analysis failed: ${err.message}` };
+  }
+});
+
 // =============================// ================= Full File Content (GitHub + Azure DevOps)
 // Exposes renderer API: window.api.getFileContent({ filename, side, repoType, prUrl, selectedPrId })
 // side: "new" (latest/head) | "old" (base)

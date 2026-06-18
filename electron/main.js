@@ -2,6 +2,9 @@ const { app, BrowserWindow } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
+
+
+
 // Avoid GPU / cache permission issues in restricted environments
 try {
   app.commandLine.appendSwitch('disable-gpu');
@@ -22,9 +25,12 @@ try {
 require("./ipcHandlers");
 
 function createWindow() {
+ 
   const win = new BrowserWindow({
     width: 1300,
     height: 900,
+   
+    icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

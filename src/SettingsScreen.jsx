@@ -99,7 +99,9 @@ export default function SettingsScreen({ onBack }) {
     enableImpactAnalysis: true,
     useCoreReference: true,
     enableKnowledgeBase: false,
-    knowledgePath: ""
+    knowledgePath: "",
+    enableIfsDocsSearch: false,
+    ifsDocsVersion: "26r1"
   });
 
   const [repoStatus, setRepoStatus] = useState(null);
@@ -109,6 +111,7 @@ export default function SettingsScreen({ onBack }) {
   const [ifsDebug, setIfsDebug] = useState(null);
   const [oauthStatus, setOAuthStatus] = useState(null);
   const [mcpStatus, setMcpStatus] = useState(null);
+  const [analysingKB, setAnalysingKB] = useState(false);
   const [auditTrail, setAuditTrail] = useState([]);
   const [tokenResult, setTokenResult] = useState(null);
   const [rules, setRules] = useState([]);
@@ -247,7 +250,9 @@ export default function SettingsScreen({ onBack }) {
           enableImpactAnalysis: cfg?.mcp?.enableImpactAnalysis !== false,
           useCoreReference: cfg?.mcp?.useCoreReference !== false,
           enableKnowledgeBase: cfg?.mcp?.enableKnowledgeBase || false,
-          knowledgePath: cfg?.mcp?.knowledgePath || ""
+          knowledgePath: cfg?.mcp?.knowledgePath || "",
+          enableIfsDocsSearch: cfg?.mcp?.enableIfsDocsSearch || false,
+          ifsDocsVersion: cfg?.mcp?.ifsDocsVersion || "26r1"
         });
       } catch (err) {
         console.error("Failed to load config", err);
@@ -607,6 +612,26 @@ export default function SettingsScreen({ onBack }) {
     }
   };
 
+  const analyseKB = async () => {
+    if (!mcp.knowledgePath) {
+      alert("⚠️ Knowledge Path is required to analyse the guidelines.");
+      return;
+    }
+    setAnalysingKB(true);
+    try {
+      const result = await window.api.analyseKnowledgeBase({ knowledgePath: mcp.knowledgePath });
+      if (result?.ok) {
+        alert("✅ Knowledge base scanned successfully.");
+      } else {
+        alert(`ℹ️ Info: ${result?.error || "Failed to update guidelines."}`);
+      }
+    } catch (err) {
+      alert(`❌ Error: ${err.message || "An unexpected error occurred."}`);
+    } finally {
+      setAnalysingKB(false);
+    }
+  };
+
   const refreshMCPStatus = async () => {
     try {
       const response = await window.api.getMCPStatus();
@@ -892,11 +917,14 @@ export default function SettingsScreen({ onBack }) {
           <div className="topbar__logo">⚙️</div>
           <div className="topbar__title">
             <span className="brand">AQS Inspect Settings</span>
-            <span className="subtitle" style={{ color: 'var(--text-secondary)' }}>Configure Git providers, LLM configurations, ERP validation rules, and solution directories</span>
+            <span className="subtitle" style={{ color: '#ffffff' }}>
+              
+              Configure Git providers, LLM configurations, ERP validation rules, and solution directories</span>
+
           </div>
         </div>
         <div className="topbar__actions" style={{ gap: '10px' }}>
-          <button onClick={onBack} className="btn ghost">
+          <button onClick={onBack} className="btn primary">
             ⬅ Back to Workspace
           </button>
           <button onClick={saveConfig} className="btn primary">
@@ -2016,16 +2044,56 @@ export default function SettingsScreen({ onBack }) {
                 {mcp.enableKnowledgeBase && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginLeft: '24px', marginTop: '4px' }}>
                     <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Knowledge Path</label>
-                    <input
-                      className="input"
-                      placeholder="e.g. C:\IFS\KnowledgeBase"
-                      value={mcp.knowledgePath || ""}
-                      onChange={(e) => setMcp({ ...mcp, knowledgePath: e.target.value })}
-                      style={{ width: '100%', maxWidth: '500px' }}
-                    />
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', maxWidth: '620px' }}>
+                      <input
+                        className="input"
+                        placeholder="e.g. C:\IFS\KnowledgeBase"
+                        value={mcp.knowledgePath || ""}
+                        onChange={(e) => setMcp({ ...mcp, knowledgePath: e.target.value })}
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={analyseKB}
+                        className="btn primary"
+                        disabled={analysingKB}
+                        style={{ whiteSpace: 'nowrap', height: '38px', padding: '0 16px' }}
+                      >
+                        {analysingKB ? "Analyzing..." : "🔍 Analyse"}
+                      </button>
+                    </div>
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                       Folder containing guidelines, checklist documents (PDF, Word, TXT, MD) to align review findings.
                     </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
+                      <input
+                        type="checkbox"
+                        id="enableIfsDocsSearch"
+                        checked={mcp.enableIfsDocsSearch || false}
+                        onChange={(e) => setMcp({ ...mcp, enableIfsDocsSearch: e.target.checked })}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      <label htmlFor="enableIfsDocsSearch" style={{ fontSize: '13px', cursor: 'pointer', userSelect: 'none' }}>
+                        Enable dynamic on-demand web search on docs.ifs.com/techdocs
+                      </label>
+                    </div>
+
+                    {mcp.enableIfsDocsSearch && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginLeft: '24px', marginTop: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>IFS Tech Docs Version</label>
+                        <input
+                          className="input"
+                          placeholder="e.g. 26r1"
+                          value={mcp.ifsDocsVersion || "26r1"}
+                          onChange={(e) => setMcp({ ...mcp, ifsDocsVersion: e.target.value })}
+                          style={{ maxWidth: '200px' }}
+                        />
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          Version sub-directory used for doc indexing (e.g. 26r1, 24r2).
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

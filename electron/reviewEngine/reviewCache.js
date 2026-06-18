@@ -50,6 +50,8 @@ function getCombinedHash(code, llmConfig, rulesList) {
   const useCoreReference = cfg?.mcp?.useCoreReference !== false;
   const enableKnowledgeBase = cfg?.mcp?.enableKnowledgeBase || false;
   const knowledgePath = cfg?.mcp?.knowledgePath || "";
+  const enableIfsDocsSearch = cfg?.mcp?.enableIfsDocsSearch || false;
+  const ifsDocsVersion = cfg?.mcp?.ifsDocsVersion || "26r1";
 
   const llmPart = llmConfig ? JSON.stringify({
     provider: llmConfig.provider,
@@ -73,15 +75,15 @@ function getCombinedHash(code, llmConfig, rulesList) {
           const stat = fs.statSync(fp);
           return `${f}:${stat.size}:${stat.mtimeMs}`;
         }).sort().join(",");
-        knowledgePart = `kb:${enableKnowledgeBase}:${knowledgePath}:${fileMeta}`;
+        knowledgePart = `kb:${enableKnowledgeBase}:${knowledgePath}:${enableIfsDocsSearch}:${ifsDocsVersion}:${fileMeta}`;
       } else {
-        knowledgePart = `kb:${enableKnowledgeBase}:${knowledgePath}:invalid`;
+        knowledgePart = `kb:${enableKnowledgeBase}:${knowledgePath}:${enableIfsDocsSearch}:${ifsDocsVersion}:invalid`;
       }
     } catch (err) {
-      knowledgePart = `kb:${enableKnowledgeBase}:${knowledgePath}:error:${err.message}`;
+      knowledgePart = `kb:${enableKnowledgeBase}:${knowledgePath}:${enableIfsDocsSearch}:${ifsDocsVersion}:error:${err.message}`;
     }
   } else {
-    knowledgePart = `kb:${enableKnowledgeBase}:disabled`;
+    knowledgePart = `kb:${enableKnowledgeBase}:${enableIfsDocsSearch}:${ifsDocsVersion}:disabled`;
   }
 
   const combinedString = `${code || ""}|||${llmPart}|||${rulesPart}|||${mcpMode}|||${useCoreReference}|||${knowledgePart}`;

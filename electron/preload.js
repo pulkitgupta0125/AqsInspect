@@ -89,6 +89,7 @@ contextBridge.exposeInMainWorld('api', {
   deleteAllRules: () => ipcRenderer.invoke('rules:deleteAll'),
   getUserEmail: (payload) => ipcRenderer.invoke('user:getEmail', payload),
   verifyMCP: () => ipcRenderer.invoke('mcp:verify'),
+  analyseKnowledgeBase: (payload) => ipcRenderer.invoke('mcp:analyseKB', payload),
   saveFeedback: (payload) => ipcRenderer.invoke('review:saveFeedback', payload),
   loadFeedback: () => ipcRenderer.invoke('review:loadFeedback'),
   generatePPTX: () => ipcRenderer.invoke('ppt:generate'),

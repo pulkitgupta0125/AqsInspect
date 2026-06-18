@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const configPath = 'C:/Users/pulkit.gupta/AppData/Roaming/electron-react-bootstrap/config.json';
-const workspaceDir = 'c:/AQS-PULKITGUPTA025';
+const workspaceDir = 'c:/AQSinspect';
 
 async function main() {
   try {

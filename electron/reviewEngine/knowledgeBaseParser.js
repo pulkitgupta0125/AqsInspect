@@ -104,6 +104,19 @@ async function loadKnowledgeBase(knowledgePath) {
   }
 }
 
+async function parseSingleFile(fullPath) {
+  const ext = path.extname(fullPath).toLowerCase();
+  if (ext === '.txt' || ext === '.md') {
+    return fs.readFileSync(fullPath, 'utf-8');
+  } else if (ext === '.docx' || ext === '.pptx' || ext === '.xlsx') {
+    return await extractTextFromOffice(fullPath);
+  } else if (ext === '.pdf') {
+    return await extractTextFromPdf(fullPath);
+  }
+  return "";
+}
+
 module.exports = {
-  loadKnowledgeBase
+  loadKnowledgeBase,
+  parseSingleFile
 };

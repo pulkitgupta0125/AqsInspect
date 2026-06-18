@@ -9,7 +9,7 @@ import { buildFileTree } from "./utils/fileTree"
 import DiffViewer from "./components/DiffViewer";
 import AIInsightsPanel from "./components/AIInsightsPanel";
 import ReviewWorkflowPanel from "./components/ReviewWorkflowPanel";
-
+import logo from "../assets/icon1.png";
 /* -----------------------------
    Helpers: path matching
 ------------------------------ */
@@ -26,9 +26,9 @@ const getFormattedDate = (dateStr) => {
   try {
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleDateString(undefined, { 
-      year: 'numeric', 
-      month: 'short', 
+    return d.toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
@@ -297,7 +297,7 @@ export default function App() {
 
 
   //const fileTree = buildFileTree(files);
-  
+
   const visibleFiles = useMemo(() => {
     if (!showImpactedOnly) return actualFilesOnly;
     return (actualFilesOnly || []).filter((f) => impactedSet.has(normPath(f.filename)));
@@ -353,23 +353,23 @@ export default function App() {
     return counts;
   }, [allFindings]);
 
-const statsByFile = useMemo(() => {
-  const m = {};
-  (actualFilesOnly || []).forEach((f) => {
-    const key = f?.filename || "";
-    const s = fileSummary[key] || { critical: 0, warning: 0, info: 0, total: 0 };
-    m[key] = {
-      ...s,
-      additions: f.additions || 0,
-      deletions: f.deletions || 0,
-    };
-  });
-  return m;
-}, [actualFilesOnly, fileSummary]);  
+  const statsByFile = useMemo(() => {
+    const m = {};
+    (actualFilesOnly || []).forEach((f) => {
+      const key = f?.filename || "";
+      const s = fileSummary[key] || { critical: 0, warning: 0, info: 0, total: 0 };
+      m[key] = {
+        ...s,
+        additions: f.additions || 0,
+        deletions: f.deletions || 0,
+      };
+    });
+    return m;
+  }, [actualFilesOnly, fileSummary]);
 
-useEffect(() => {
-  console.log("✅ FILES STRUCTURE →", JSON.stringify(files, null, 2))
-}, [files])
+  useEffect(() => {
+    console.log("✅ FILES STRUCTURE →", JSON.stringify(files, null, 2))
+  }, [files])
 
   /* =============================
      Jump controls (existing behaviour)
@@ -443,7 +443,7 @@ useEffect(() => {
   const viewMode = useMemo(() => {
     if (checkingConfig) return "loading";
     if (showSettings) return "settings";
-    
+
     let needsSetup = false;
     if (repoType === "azure") {
       if (config?.multiRepo) {
@@ -468,7 +468,7 @@ useEffect(() => {
         needsSetup = !(config?.githubToken || config?.github?.token) || !(config?.github?.owner && config?.github?.repo);
       }
     }
-    
+
     if (needsSetup) return "setup";
     return "main";
   }, [checkingConfig, showSettings, config?.githubToken, config?.azure, config?.multiRepo, config?.azureRepos, config?.multiRepoGithub, config?.githubRepos, repoType, activeAzureRepo, activeGithubRepo]);
@@ -477,7 +477,7 @@ useEffect(() => {
      PR list + diff + AI review actions
   ============================= */
   // loadPRs accepts optional overrideFilters so the UI can trigger reloads immediately
-    const loadPRs = async (overrideFilters) => {
+  const loadPRs = async (overrideFilters) => {
     setPrListLoading(true);
     setError(null);
     //setStatusMessage("");
@@ -577,7 +577,7 @@ useEffect(() => {
     anchorsRef.current = [];
     anchorKeyToIndex.current = new Map();
     findingAnchorMapRef.current = new Map();
-    
+
     try {
       if (repoType === "azure") {
         await window.api.saveConfig({ selectedCustomer: cust });
@@ -757,14 +757,14 @@ useEffect(() => {
           setReviewProgress({
             current: completedCount,
             total: fetchedFiles.length,
-            file: activeFiles.length > 0 
-              ? `Reviewing: ${activeFiles.join(", ")}` 
+            file: activeFiles.length > 0
+              ? `Reviewing: ${activeFiles.join(", ")}`
               : "Consolidating all findings..."
           });
           setStatusMessage(`Reviewed ${completedCount}/${fetchedFiles.length} files`);
 
           setFiles((prev) => prev.map((p) => (p.filename === file.filename ? { ...p, reviewed: true, processing: false, findings: fileFindings } : p)));
-          
+
           setSelectedFile((curr) => {
             if (curr) return curr;
             return { ...file, reviewed: true, processing: false, findings: fileFindings };
@@ -778,8 +778,8 @@ useEffect(() => {
           setReviewProgress({
             current: completedCount,
             total: fetchedFiles.length,
-            file: activeFiles.length > 0 
-              ? `Reviewing: ${activeFiles.join(", ")}` 
+            file: activeFiles.length > 0
+              ? `Reviewing: ${activeFiles.join(", ")}`
               : "Consolidating all findings..."
           });
 
@@ -805,7 +805,7 @@ useEffect(() => {
       setReviewProgress(null);
     }
   };
-	  
+
 
   const composeReviewEmail = () => {
     const title = prMeta?.title || `PR Review`;
@@ -1148,7 +1148,7 @@ useEffect(() => {
           <div className="topbar">
             <div className="topbar__left">
               <div className="topbar__brand">
-                <div className="topbar__logo">AQ</div>
+                <img src={logo} alt="AQS Inspect" className="topbar__logo-img" />
                 <div className="topbar__title">
                   <div className="brand">AQS Inspect</div>
                   <div className="subtitle">AI Code Review</div>
@@ -1167,8 +1167,8 @@ useEffect(() => {
                 title={navCollapsed ? "Show File Navigator" : "Hide File Navigator"}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2"/>
-                  <line x1="9" y1="3" x2="9" y2="21"/>
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <line x1="9" y1="3" x2="9" y2="21" />
                 </svg>
               </button>
 
@@ -1179,8 +1179,8 @@ useEffect(() => {
                 title="Focus Workspace (Collapse Sidebars)"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
-                  <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                  <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+                  <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
                 </svg>
               </button>
 
@@ -1191,14 +1191,14 @@ useEffect(() => {
                 title="Restore Sidebars"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <polyline points="3 9 3 3 9 3"/><polyline points="21 15 21 21 15 21"/>
-                  <line x1="3" y1="3" x2="10" y2="10"/><line x1="21" y1="21" x2="14" y2="14"/>
+                  <polyline points="3 9 3 3 9 3" /><polyline points="21 15 21 21 15 21" />
+                  <line x1="3" y1="3" x2="10" y2="10" /><line x1="21" y1="21" x2="14" y2="14" />
                 </svg>
               </button>
 
 
 
-              <div className="topbar__divider" />
+
 
               <button
                 className="btn-icon"
@@ -1208,7 +1208,7 @@ useEffect(() => {
                 title={aiReview?.findings?.length ? `AI Review (${aiReview.findings.length} findings)` : 'Run a review first'}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                  <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                 </svg>
               </button>
 
@@ -1219,16 +1219,16 @@ useEffect(() => {
                 style={{ color: "var(--accent-light, #6366f1)" }}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="10"/>
-                  <line x1="12" y1="16" x2="12" y2="12"/>
-                  <line x1="12" y1="8" x2="12.01" y2="8"/>
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="16" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12.01" y2="8" />
                 </svg>
               </button>
 
               <button className="btn-icon" onClick={() => setShowSettings(true)} title="Settings">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="3"/>
-                  <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
                 </svg>
               </button>
             </div>
@@ -1238,6 +1238,7 @@ useEffect(() => {
           <div className="panel">
             {/* Row 1: Source selector + PR dropdown + action triggers */}
             <div className="panel__section" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              
               <select
                 className="input"
                 style={{ maxWidth: 160, flex: '0 0 auto' }}
@@ -1299,7 +1300,7 @@ useEffect(() => {
               </button>
 
               <button
-                className={`btn ghost ${showFilters ? "active" : ""}`}
+                className={`btn btn-primary-gradient ${showFilters ? "active" : ""}`}
                 onClick={() => setShowFilters(v => !v)}
                 style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}
                 title="Toggle Filters"
@@ -1308,7 +1309,7 @@ useEffect(() => {
               </button>
 
               <button
-                className="btn ghost"
+                className="btn btn-primary-gradient"
                 onClick={() => { setSelectedPrId(""); setPrUrl(""); resetPrData(); }}
                 disabled={!selectedPrId && !prUrl}
                 style={{ flexShrink: 0 }}
@@ -1319,7 +1320,13 @@ useEffect(() => {
 
             {/* Collapsible filters row */}
             {showFilters && (
-              <div className="panel__section" style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', padding: '10px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-dark)', marginTop: 8 }}>
+              <div className="panel__section" style={{
+                display: 'flex', gap: 8, alignItems: 'center',
+                background: 'var(--bg-card)',
+                border: '1px dashed var(--border-light)',
+                color: 'var(--text-secondary'
+                , padding: '10px 12px', borderRadius: 'var(--radius-md)', marginTop: 8
+              }}>
                 <select
                   className="input"
                   style={{ maxWidth: 180, flex: '1 1 auto' }}
@@ -1410,7 +1417,7 @@ useEffect(() => {
             {error && (
               <div className="error-container" style={{ marginTop: 10 }}>
                 <div className="error">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
                   {error}
                 </div>
                 {rateLimitRetry && (
@@ -1439,7 +1446,7 @@ useEffect(() => {
             return (
               <div className={`workarea ${isDragging ? "dragging" : ""}`}>
                 {/* Sidebar */}
-                <aside 
+                <aside
                   className={`sidebar ${navCollapsed ? "collapsed" : ""}`}
                   style={{
                     width: navCollapsed ? 0 : `${sidebarWidth}px`,
@@ -1489,9 +1496,9 @@ useEffect(() => {
                         />
                       ) : (
                         <div style={{ padding: '28px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-                          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6e7681" strokeWidth="1.5" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6e7681" strokeWidth="1.5" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
                           <div style={{ fontSize: 12, color: '#6e7681', textAlign: 'center', lineHeight: 1.5 }}>
-                            Review a pull request<br/>to see files here
+                            Review a pull request<br />to see files here
                           </div>
                         </div>
                       )}
@@ -1499,22 +1506,27 @@ useEffect(() => {
                   )}
                 </aside>
 
-                {!navCollapsed && (
-                  <div 
-                    className="sidebar-resizer"
-                    onMouseDown={initDrag}
-                    style={{
-                      width: '6px',
-                      cursor: 'col-resize',
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      alignSelf: 'stretch',
-                      flexShrink: 0,
-                      margin: '0 -3px',
-                      zIndex: 10,
-                      position: 'relative'
-                    }}
-                  />
-                )}
+                {!navCollapsed && !showAIReviewPopup &&
+                  !showDiffDialog &&
+                  !showSettings &&
+                  !showAbout &&
+                  !reviewProgress  &&
+                  (
+                    <div
+                      className="sidebar-resizer"
+                      onMouseDown={initDrag}
+                      style={{
+                        width: '6px',
+                        cursor: 'col-resize',
+                        background: 'var(--bg-card)',
+                        alignSelf: 'stretch',
+                        flexShrink: 0,
+                        margin: '0 -3px',
+                        zIndex: 10,
+                        position: 'relative'
+                      }}
+                    />
+                  )}
 
                 {/* Center Main Area */}
                 <main className="main" style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -1548,7 +1560,7 @@ useEffect(() => {
                             {activePr.status && (
                               <>
                                 <span>&bull;</span>
-                                <span className="diff-toolbar__badge" style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(255,255,255,0.06)' }}>
+                                <span className="diff-toolbar__badge" style={{ padding: '2px 8px', borderRadius: 4, background: 'var(--bg-card)' }}>
                                   {String(activePr.status || activePr.state).toUpperCase()}
                                 </span>
                               </>
@@ -1565,17 +1577,17 @@ useEffect(() => {
                           <div className="pr-dashboard-actions-row" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
                             {aiReview && (
                               <>
-                                <button className="btn" onClick={() => setShowAIReviewPopup(true)} style={{ fontSize: 13, height: 36, padding: '0 14px' }} title="Open Full AI Review Details">
+                                <button className="btn btn-primary-gradient" onClick={() => setShowAIReviewPopup(true)} style={{ fontSize: 13, height: 36, padding: '0 14px' }} title="Open Full AI Review Details">
                                   🔍 Details
                                 </button>
-                                
+
                                 {!config?.email?.disabled && (
-                                  <button className="btn" onClick={sendReviewEmail} style={{ fontSize: 13, height: 36, padding: '0 12px' }} title="Send Review Email">
+                                  <button className="btn btn-primary-gradient" onClick={sendReviewEmail} style={{ fontSize: 13, height: 36, padding: '0 12px' }} title="Send Review Email">
                                     📧 Email
                                   </button>
                                 )}
-                                
-                                <button className="btn" onClick={exportReportPdf} style={{ fontSize: 13, height: 36, padding: '0 12px' }} title="Export PDF Report">
+
+                                <button className="btn btn-primary-gradient" onClick={exportReportPdf} style={{ fontSize: 13, height: 36, padding: '0 12px' }} title="Export PDF Report">
                                   📄 PDF
                                 </button>
                               </>
@@ -1586,7 +1598,7 @@ useEffect(() => {
                                 ✓ Accept Pull Request
                               </button>
                             )}
-                            
+
                             {isRejectEnabled && (
                               <button className="btn danger" onClick={() => performPRAction(repoType === "azure" ? "abandon" : "reject")} style={{ fontSize: 13, height: 36, padding: '0 14px' }}>
                                 ✕ {repoType === "azure" ? "Abandon" : "Reject"}
@@ -1653,7 +1665,7 @@ useEffect(() => {
                           </div>
 
                           {/* Blockers */}
-                          <div className="pr-dashboard-card" style={{ borderLeft: '4px solid var(--red)', padding: '10px 14px', background: 'rgba(239, 68, 68, 0.02)', display: 'flex', flexDirection: 'column' }}>
+                          <div className="pr-dashboard-card" style={{ borderLeft: '4px solid var(--red)', padding: '10px 14px', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column' }}>
                             <span className="pr-dashboard-card-label" style={{ color: 'var(--red)', fontSize: 10 }}>Blockers</span>
                             <span className="pr-dashboard-card-value" style={{ fontSize: 20 }}>
                               {aiReview ? aiReview.findings.filter(f => String(f.severity).toLowerCase() === 'blocker' || String(f.severity).toLowerCase() === 'critical').length : "—"}
@@ -1662,7 +1674,7 @@ useEffect(() => {
                           </div>
 
                           {/* Majors */}
-                          <div className="pr-dashboard-card" style={{ borderLeft: '4px solid var(--amber)', padding: '10px 14px', background: 'rgba(245, 158, 11, 0.02)', display: 'flex', flexDirection: 'column' }}>
+                          <div className="pr-dashboard-card" style={{ borderLeft: '4px solid var(--amber)', padding: '10px 14px', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column' }}>
                             <span className="pr-dashboard-card-label" style={{ color: 'var(--amber)', fontSize: 10 }}>Majors</span>
                             <span className="pr-dashboard-card-value" style={{ fontSize: 20 }}>
                               {aiReview ? aiReview.findings.filter(f => String(f.severity).toLowerCase() === 'major' || String(f.severity).toLowerCase() === 'warning').length : "—"}
@@ -1671,7 +1683,7 @@ useEffect(() => {
                           </div>
 
                           {/* Minors */}
-                          <div className="pr-dashboard-card" style={{ borderLeft: '4px solid var(--sky)', padding: '10px 14px', background: 'rgba(56, 189, 248, 0.02)', display: 'flex', flexDirection: 'column' }}>
+                          <div className="pr-dashboard-card" style={{ borderLeft: '4px solid var(--sky)', padding: '10px 14px', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column' }}>
                             <span className="pr-dashboard-card-label" style={{ color: 'var(--sky)', fontSize: 10 }}>Minors</span>
                             <span className="pr-dashboard-card-value" style={{ fontSize: 20 }}>
                               {aiReview ? aiReview.findings.filter(f => String(f.severity).toLowerCase() === 'minor').length : "—"}
@@ -1680,7 +1692,7 @@ useEffect(() => {
                           </div>
 
                           {/* Infos */}
-                          <div className="pr-dashboard-card" style={{ borderLeft: '4px solid var(--text-muted)', padding: '10px 14px', background: 'rgba(255, 255, 255, 0.01)', display: 'flex', flexDirection: 'column' }}>
+                          <div className="pr-dashboard-card" style={{ borderLeft: '4px solid var(--text-muted)', padding: '10px 14px', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column' }}>
                             <span className="pr-dashboard-card-label" style={{ color: 'var(--text-muted)', fontSize: 10 }}>Infos</span>
                             <span className="pr-dashboard-card-value" style={{ fontSize: 20 }}>
                               {aiReview ? aiReview.findings.filter(f => String(f.severity).toLowerCase() === 'info').length : "—"}
@@ -1691,7 +1703,7 @@ useEffect(() => {
 
                         {/* Combined Two-Column Dashboard Content */}
                         <div className="pr-dashboard-content-split" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginTop: 20 }}>
-                          
+
                           {/* Left Column: Files Changed list */}
                           <div className="pr-dashboard-section" style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                             <span className="pr-dashboard-section-title" style={{ marginBottom: 10 }}>Files Changed ({actualFilesOnly.length})</span>
@@ -1711,7 +1723,7 @@ useEffect(() => {
                                       <div className="pr-dashboard-file-meta">
                                         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>+{f.additions || 0} / -{f.deletions || 0}</span>
                                         {fileFindings.length > 0 && (
-                                          <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontWeight: 700 }}>
+                                          <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'var(--bg-card)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', fontWeight: 700 }}>
                                             {fileFindings.length} issue{fileFindings.length !== 1 ? 's' : ''}
                                           </span>
                                         )}
@@ -1728,7 +1740,7 @@ useEffect(() => {
                             <span className="pr-dashboard-section-title" style={{ marginBottom: 10 }}>
                               Top Review Findings {aiReview && `(${aiReview.findings.length})`}
                             </span>
-                            
+
                             {aiReview ? (
                               <div style={{ maxHeight: '340px', overflowY: 'auto', paddingRight: 4, display: 'flex', flexDirection: 'column', gap: 12 }}>
                                 {aiReview.findings && aiReview.findings.length > 0 ? (
@@ -1784,10 +1796,10 @@ useEffect(() => {
                                 )}
                               </div>
                             ) : (
-                              <div className="pr-dashboard-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(255,255,255,0.01)', border: '1px dashed var(--border-dark)', borderRadius: 'var(--radius-md)' }}>
-                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6e7681" strokeWidth="1.5" strokeLinecap="round" style={{ marginBottom: 8 }}><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                              <div className="pr-dashboard-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'var(--bg-card)', border: '1px dashed var(--border-dark)', borderRadius: 'var(--radius-md)' }}>
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6e7681" strokeWidth="1.5" strokeLinecap="round" style={{ marginBottom: 8 }}><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
                                 <span style={{ fontSize: 12, color: '#8b949e', textAlign: 'center', lineHeight: 1.6 }}>
-                                  No AI review findings loaded yet.<br/>Click "Review Pull Request" to trigger analysis.
+                                  No AI review findings loaded yet.<br />Click "Review Pull Request" to trigger analysis.
                                 </span>
                               </div>
                             )}
@@ -1841,7 +1853,7 @@ useEffect(() => {
                   <div className="diff-dialog-title">
                     <span style={{ fontSize: 18 }}>📄</span>
                     <span style={{ wordBreak: 'break-all' }}>{selectedFile.filename}</span>
-                    <span className="diff-toolbar__badge" style={{ marginLeft: 8, background: 'rgba(255,255,255,0.06)', padding: '2px 8px', borderRadius: 4, fontSize: 11 }}>
+                    <span className="diff-toolbar__badge" style={{ marginLeft: 8, background: 'var(--bg-card)', padding: '2px 8px', borderRadius: 4, fontSize: 11 }}>
                       {String(selectedFile.status || "modified").toUpperCase()}
                     </span>
                   </div>
@@ -1854,9 +1866,9 @@ useEffect(() => {
                         setSelectedFile(null);
                       }}
                       style={{
-                        background: "rgba(239, 68, 68, 0.15)",
-                        borderColor: "rgba(239, 68, 68, 0.3)",
-                        color: "#f87171",
+                        background: 'var(--bg-card)',
+                        border: '1px dashed var(--border-light)',
+                        color: 'var(--text-secondary)',
                         fontWeight: 600,
                         fontSize: 12,
                         padding: "6px 14px",
@@ -1924,11 +1936,11 @@ useEffect(() => {
                               </div>
                               <div className="reviewcard__body" style={{ fontSize: 12, lineHeight: 1.4 }}>{f.explanation || ''}</div>
                               {f.recommendation && (
-                                <div style={{ marginTop: 6, fontSize: 11, padding: '4px 8px', borderRadius: 4, background: 'rgba(99,102,241,0.08)', borderLeft: '2px solid rgba(99,102,241,0.4)', color: '#a5b4fc' }}>
+                                <div style={{ marginTop: 6, fontSize: 11, padding: '4px 8px', borderRadius: 4, background: 'var(--bg-card)', borderLeft: '2px solid var(--accent)', color: '#a5b4fc' }}>
                                   💡 {f.recommendation}
                                 </div>
                               )}
-                              
+
                               {/* Feedback Loop Controls */}
                               <div className="reviewcard__feedback" onClick={(e) => e.stopPropagation()} style={{ display: 'flex', gap: 8, marginTop: 10, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
                                 <span style={{ fontSize: 10.5, color: 'var(--text-muted)', marginRight: 'auto' }}>Helpful?</span>
@@ -1937,12 +1949,12 @@ useEffect(() => {
                                   const savedFeedback = feedbackMap[key]?.status;
                                   return (
                                     <>
-                                      <button 
+                                      <button
                                         className="btn btn-feedback-accept"
-                                        style={{ 
-                                          padding: '4px 10px', 
-                                          fontSize: 11, 
-                                          background: savedFeedback === 'accepted' ? 'var(--green-soft)' : 'rgba(255,255,255,0.03)', 
+                                        style={{
+                                          padding: '4px 10px',
+                                          fontSize: 11,
+                                          background: savedFeedback === 'accepted' ? 'var(--green-soft)' : 'var(--bg-card)',
                                           borderColor: savedFeedback === 'accepted' ? 'var(--green-border)' : 'var(--border-dark)',
                                           color: savedFeedback === 'accepted' ? 'var(--green)' : 'var(--text-secondary)',
                                           cursor: 'pointer'
@@ -1951,12 +1963,12 @@ useEffect(() => {
                                       >
                                         👍 Yes
                                       </button>
-                                      <button 
+                                      <button
                                         className="btn btn-feedback-reject"
-                                        style={{ 
-                                          padding: '4px 10px', 
-                                          fontSize: 11, 
-                                          background: savedFeedback === 'rejected' ? 'var(--red-soft)' : 'rgba(255,255,255,0.03)', 
+                                        style={{
+                                          padding: '4px 10px',
+                                          fontSize: 11,
+                                          background: savedFeedback === 'rejected' ? 'var(--red-soft)' : 'var(--bg-card)',
                                           borderColor: savedFeedback === 'rejected' ? 'var(--red-border)' : 'var(--border-dark)',
                                           color: savedFeedback === 'rejected' ? 'var(--red)' : 'var(--text-secondary)',
                                           cursor: 'pointer'
@@ -2068,21 +2080,21 @@ function AIReviewPopup({ open, onClose, findings, selectedFile, files, aiReview,
               AI Review
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: '#8b949e' }}>
+              <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 999, background: 'var(--bg-card)', border: '1px solid var(--border-dark)', color: 'var(--text-primary)' }}>
                 {selectedFile ? baseName(selectedFile.filename) : 'All files'}
               </span>
-              <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 999, background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.25)', color: '#818cf8', fontWeight: 700 }}>
+              <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 999, background: 'var(--bg-card)', border: '1px solid var(--border-dark)', color: 'var(--text-primary)', fontWeight: 700 }}>
                 {sortedFindings.length} finding{sortedFindings.length !== 1 ? 's' : ''}
               </span>
             </div>
           </div>
 
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <button className="btn" onClick={goPrev} disabled={!canNav}>↑ Prev</button>
-            <button className="btn" onClick={goNext} disabled={!canNav}>↓ Next</button>
+            <button className="btn btn-primary-gradient" onClick={goPrev} disabled={!canNav}>↑ Prev</button>
+            <button className="btn btn-primary-gradient" onClick={goNext} disabled={!canNav}>↓ Next</button>
             <div className="topbar__divider" />
-            <button className="btn-icon" onClick={onClose} title="Close (Esc)">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <button className="btn btn-primary-gradient" onClick={onClose} title="Close (Esc)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
             </button>
           </div>
         </div>
@@ -2132,7 +2144,7 @@ function AIReviewPopup({ open, onClose, findings, selectedFile, files, aiReview,
           <div className="ai-left">
             <div className="ai-section-title">Impacted Files</div>
             <div className="ai-filelist">
-              <button className={`ai-file ${!selectedFile ? 'active' : ''}`} onClick={() => onSelectFile?.(null)}>
+              <button className={`btn btn-primary-gradient ${!selectedFile ? 'active' : ''}`} onClick={() => onSelectFile?.(null)}>
                 All files
                 <span style={{ float: 'right', fontSize: 11, opacity: 0.7 }}>{safeFindings.length}</span>
               </button>
@@ -2142,7 +2154,7 @@ function AIReviewPopup({ open, onClose, findings, selectedFile, files, aiReview,
                 return (
                   <button
                     key={f.filename}
-                    className={`ai-file ${selectedFile?.filename === f.filename ? 'active' : ''}`}
+                    className={`btn btn-primary-gradient ${selectedFile?.filename === f.filename ? 'active' : ''}`}
                     onClick={() => onSelectFile?.(f)}
                     title={f.filename}
                   >
@@ -2198,7 +2210,7 @@ function AIReviewPopup({ open, onClose, findings, selectedFile, files, aiReview,
                     </div>
                     <div className="reviewcard__body">{f.explanation || ''}</div>
                     {f.recommendation && (
-                      <div style={{ marginTop: 8, fontSize: 12, padding: '6px 10px', borderRadius: 6, background: 'rgba(99,102,241,0.08)', borderLeft: '2px solid rgba(99,102,241,0.4)', color: '#a5b4fc' }}>
+                      <div style={{ marginTop: 8, fontSize: 12, padding: '6px 10px', borderRadius: 6, background: 'var(--bg-card)', borderLeft: '2px solid var(--accent)', color: '#a5b4fc' }}>
                         💡 {f.recommendation}
                       </div>
                     )}
@@ -2211,12 +2223,12 @@ function AIReviewPopup({ open, onClose, findings, selectedFile, files, aiReview,
                         const savedFeedback = feedbackMap[key]?.status;
                         return (
                           <>
-                            <button 
+                            <button
                               className="btn btn-feedback-accept"
-                              style={{ 
-                                padding: '4px 10px', 
-                                fontSize: 11, 
-                                background: savedFeedback === 'accepted' ? 'var(--green-soft)' : 'rgba(255,255,255,0.03)', 
+                              style={{
+                                padding: '4px 10px',
+                                fontSize: 11,
+                                background: savedFeedback === 'accepted' ? 'var(--green-soft)' : 'var(--bg-card)',
                                 borderColor: savedFeedback === 'accepted' ? 'var(--green-border)' : 'var(--border-dark)',
                                 color: savedFeedback === 'accepted' ? 'var(--green)' : 'var(--text-secondary)',
                                 cursor: 'pointer'
@@ -2225,12 +2237,12 @@ function AIReviewPopup({ open, onClose, findings, selectedFile, files, aiReview,
                             >
                               👍 Yes
                             </button>
-                            <button 
+                            <button
                               className="btn btn-feedback-reject"
-                              style={{ 
-                                padding: '4px 10px', 
-                                fontSize: 11, 
-                                background: savedFeedback === 'rejected' ? 'var(--red-soft)' : 'rgba(255,255,255,0.03)', 
+                              style={{
+                                padding: '4px 10px',
+                                fontSize: 11,
+                                background: savedFeedback === 'rejected' ? 'var(--red-soft)' : 'var(--bg-card)',
                                 borderColor: savedFeedback === 'rejected' ? 'var(--red-border)' : 'var(--border-dark)',
                                 color: savedFeedback === 'rejected' ? 'var(--red)' : 'var(--text-secondary)',
                                 cursor: 'pointer'

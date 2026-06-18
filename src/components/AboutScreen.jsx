@@ -54,25 +54,25 @@ export default function AboutScreen({ onClose }) {
 
       {/* Main Content Area */}
       <div className="slide-content about-content">
-        
+
         {/* Top Section: Overview & Metrics */}
         <div className="slide-grid-top">
-          
+
           {/* Card 1: What is AQS Inspect */}
           <div className="slide-card bottleneck-card about-card-left">
             <div className="slide-card__header">
               <span className="icon accent-color">ℹ️</span>
               <h3>WHAT IS AQS INSPECT?</h3>
             </div>
-            
+
             <div className="slide-card__body about-text-body">
-              <p style={{ margin: "0 0 10px 0", fontSize: "12.5px", lineHeight: "1.5", color: "#cbd5e1" }}>
+              <p style={{ margin: "0 0 10px 0", fontSize: "12.5px", lineHeight: "1.5", color: "var(--text-secondary)" }}>
                 <strong>AQS Inspect</strong> is an enterprise-grade desktop utility designed to streamline pull request reviews, enforce mandatory coding standards, and perform context-aware static code inspections.
               </p>
-              <p style={{ margin: "0 0 10px 0", fontSize: "12.5px", lineHeight: "1.5", color: "#cbd5e1" }}>
+              <p style={{ margin: "0 0 10px 0", fontSize: "12.5px", lineHeight: "1.5", color: "var(--text-secondary)" }}>
                 By combining <strong>deterministic rule-based checks</strong> with <strong>LLM-guided hybrid reasoning</strong>, AQS Inspect ensures codebases strictly adhere to AQS Guidelines, helps developers catch critical bugs early, and automatically logs complete audit trails for security.
               </p>
-              <p style={{ margin: 0, fontSize: "12.5px", lineHeight: "1.5", color: "#cbd5e1" }}>
+              <p style={{ margin: 0, fontSize: "12.5px", lineHeight: "1.5", color: "var(--text-secondary)" }}>
                 Its specialized integration with <strong>IFS ERP</strong> endpoints allows developers to analyze database and metadata impacts dynamically before code is ever merged.
               </p>
             </div>
@@ -84,22 +84,31 @@ export default function AboutScreen({ onClose }) {
               <span className="icon success-color">✅</span>
               <h3>CORE BENEFITS</h3>
             </div>
-            
+
             <div className="slide-card__body about-benefits-body" style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               <div className="bottleneck-item">
-                <div className="bottleneck-item__meta" style={{ backgroundColor: "rgba(16, 185, 129, 0.12)", color: "#10b981" }}>Standardization</div>
+                <div className="bottleneck-item__meta" style={{
+                  background: "var(--green-soft)",
+                  color: "var(--green)"
+                }}>Standardization</div>
                 <div className="bottleneck-item__text">
                   <strong>Mandatory AQS Compliance</strong>: Automatically enforces standardized guidelines, naming conventions, and best coding practices across all files.
                 </div>
               </div>
               <div className="bottleneck-item">
-                <div className="bottleneck-item__meta" style={{ backgroundColor: "rgba(16, 185, 129, 0.12)", color: "#10b981" }}>Defect Reduction</div>
+                <div className="bottleneck-item__meta" style={{
+                  background: "var(--green-soft)",
+                  color: "var(--green)"
+                }}>Defect Reduction</div>
                 <div className="bottleneck-item__text">
                   <strong>Bug Detection</strong>: Flags potential runtime errors, security vulnerabilities, and design violations instantly.
                 </div>
               </div>
               <div className="bottleneck-item">
-                <div className="bottleneck-item__meta" style={{ backgroundColor: "rgba(16, 185, 129, 0.12)", color: "#10b981" }}>Seamless Flow</div>
+                <div className="bottleneck-item__meta" style={{
+                  background: "var(--green-soft)",
+                  color: "var(--green)"
+                }}>Seamless Flow</div>
                 <div className="bottleneck-item__text">
                   <strong>Workflow Integration</strong>: Fits directly into the developer review loop, reducing reliance on manual oversight and coordination.
                 </div>
@@ -113,7 +122,7 @@ export default function AboutScreen({ onClose }) {
               <span className="icon warning-color">📈</span>
               <h3>IMPACT METRICS</h3>
             </div>
-            
+
             <div className="slide-card__body transformation-body">
               <div className="time-comparison">
                 <div className="time-box manual">
@@ -121,11 +130,11 @@ export default function AboutScreen({ onClose }) {
                   <div className="time-box__value">4.0</div>
                   <div className="time-box__unit">hours</div>
                 </div>
-                
+
                 <div className="time-arrow">
                   <span className="arrow-graphic">➔</span>
                 </div>
-                
+
                 <div className="time-box aqs">
                   <div className="time-box__label">AQS INSPECT</div>
                   <div className="time-box__value">~5</div>
@@ -151,11 +160,11 @@ export default function AboutScreen({ onClose }) {
             <span className="icon">⚙️</span>
             <h3>HOW AQS INSPECT INTEGRATES INTO DEVELOPMENT WORKFLOW</h3>
           </div>
-          
+
           <div className="workflow-flow">
             {workflowSteps.map((step, idx) => (
               <React.Fragment key={step.num}>
-                <div 
+                <div
                   className={`workflow-step ${activeStep === idx ? "active" : ""}`}
                   onMouseEnter={() => setActiveStep(idx)}
                   onMouseLeave={() => setActiveStep(null)}
@@ -163,7 +172,7 @@ export default function AboutScreen({ onClose }) {
                   <div className="workflow-step__num">{step.num}</div>
                   <div className="workflow-step__title">{step.title}</div>
                   <div className="workflow-step__desc">{step.desc}</div>
-                  
+
                   {/* Tooltip detail shown on active hover */}
                   <div className="workflow-step__tooltip">
                     {step.detail}
@@ -178,6 +187,6 @@ export default function AboutScreen({ onClose }) {
         </div>
 
       </div>
-    </div>
+    </div >
   );
 }
